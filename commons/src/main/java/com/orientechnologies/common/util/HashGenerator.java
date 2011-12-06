@@ -8,7 +8,7 @@ public abstract class HashGenerator {
   private static final long MAX_VALUE = 0xFFFFFFFFL;
 
   /**
-   * hashlittle2: return 2 32-bit hash values
+   * Generates two 32-bit hash values form passed in key.
    * <p/>
    * This is good enough for hash table
    * lookup with 2^^64 buckets, or if you want a second hash if you're not
