@@ -26,12 +26,13 @@ import com.orientechnologies.orient.core.sql.functions.OSQLFunctionAbstract;
  * Returns the current date time. If no formatting is passed, then long format is used.
  * 
  * @author Luca Garulli (l.garulli--at--orientechnologies.com)
+ * @see OSQLFunctionDate
  * 
  */
 public class OSQLFunctionSysdate extends OSQLFunctionAbstract {
 	public static final String	NAME	= "sysdate";
 
-	private Date								now;
+	private final Date					now;
 	private SimpleDateFormat		format;
 
 	/**

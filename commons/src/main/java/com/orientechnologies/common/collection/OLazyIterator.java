@@ -15,13 +15,14 @@
  */
 package com.orientechnologies.common.collection;
 
+import java.util.Iterator;
+
 /**
- * Interface to listen events from Tree Map.
+ * Generic interface for lazy iterators allowing the update of current value.
  * 
  * @author Luca Garulli (l.garulli--at--orientechnologies.com)
+ * 
  */
-public interface OMVRBTreeEventListener<K, V> {
-	public void signalTreeChanged(OMVRBTree<K, V> iTree);
-
-	public void signalNodeChanged(OMVRBTreeEntry<K, V> iNode);
+public interface OLazyIterator<T> extends Iterator<T> {
+	public T update(T iValue);
 }

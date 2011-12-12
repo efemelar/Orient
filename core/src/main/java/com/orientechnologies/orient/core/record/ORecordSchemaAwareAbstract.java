@@ -19,16 +19,14 @@ import java.text.ParseException;
 import java.util.Collection;
 import java.util.Date;
 
-import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
+import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.db.record.ORecordElement;
 import com.orientechnologies.orient.core.exception.OValidationException;
-import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.metadata.schema.OProperty;
 import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.record.impl.ODocument;
-import com.orientechnologies.orient.core.serialization.serializer.record.OSerializationThreadLocal;
 
 @SuppressWarnings({ "unchecked", "serial" })
 public abstract class ORecordSchemaAwareAbstract<T> extends ORecordAbstract<T> implements ORecordSchemaAware<T> {
@@ -36,17 +34,6 @@ public abstract class ORecordSchemaAwareAbstract<T> extends ORecordAbstract<T> i
 	protected OClass	_clazz;
 
 	public ORecordSchemaAwareAbstract() {
-	}
-
-	public ORecordSchemaAwareAbstract(final ODatabaseRecord iDatabase) {
-		super(iDatabase);
-	}
-
-	public ORecordSchemaAwareAbstract<T> fill(final ODatabaseRecord iDatabase, final int iClassId, final ORecordId iRid,
-			final int iVersion, final byte[] iBuffer, boolean iDirty) {
-		fill(iDatabase, iRid, iVersion, iBuffer, iDirty);
-		setClass(null);
-		return this;
 	}
 
 	@Override
@@ -59,13 +46,13 @@ public abstract class ORecordSchemaAwareAbstract<T> extends ORecordAbstract<T> i
 
 	@Override
 	public ORecordAbstract<T> save(final String iClusterName) {
-		OSerializationThreadLocal.INSTANCE.get().clear();
-		try {
-			validate();
-			return super.save(iClusterName);
-		} finally {
-			OSerializationThreadLocal.INSTANCE.get().clear();
-		}
+		// OSerializationThreadLocal.INSTANCE.get().clear();
+		// try {
+		validate();
+		return super.save(iClusterName);
+		// } finally {
+		// OSerializationThreadLocal.INSTANCE.get().clear();
+		// }
 	}
 
 	/**
@@ -77,7 +64,7 @@ public abstract class ORecordSchemaAwareAbstract<T> extends ORecordAbstract<T> i
 	 *           if the document breaks some validation constraints defined in the schema
 	 */
 	public void validate() throws OValidationException {
-		if (_database != null && !_database.isValidationEnabled())
+		if (ODatabaseRecordThreadLocal.INSTANCE.check() && !getDatabase().isValidationEnabled())
 			return;
 
 		checkForLoading();
@@ -104,21 +91,21 @@ public abstract class ORecordSchemaAwareAbstract<T> extends ORecordAbstract<T> i
 	}
 
 	public void setClassName(final String iClassName) {
-		if (_database == null || iClassName == null) {
+		if (iClassName == null) {
 			_clazz = null;
 			return;
 		}
 
-		setClass(_database.getMetadata().getSchema().getOrCreateClass(iClassName));
+		setClass(getDatabase().getMetadata().getSchema().getOrCreateClass(iClassName));
 	}
 
 	public void setClassNameIfExists(final String iClassName) {
-		if (_database == null || iClassName == null) {
+		if (iClassName == null) {
 			_clazz = null;
 			return;
 		}
 
-		setClass(_database.getMetadata().getSchema().getClass(iClassName));
+		setClass(getDatabase().getMetadata().getSchema().getClass(iClassName));
 	}
 
 	@Override
@@ -134,7 +121,7 @@ public abstract class ORecordSchemaAwareAbstract<T> extends ORecordAbstract<T> i
 
 	public byte[] toStream(final boolean iOnlyDelta) {
 		if (_source == null)
-			_source = _recordFormat.toStream(_database, this, iOnlyDelta);
+			_source = _recordFormat.toStream(this, iOnlyDelta);
 
 		invokeListenerEvent(ORecordListener.EVENT.MARSHALL);
 
@@ -156,7 +143,7 @@ public abstract class ORecordSchemaAwareAbstract<T> extends ORecordAbstract<T> i
 			return;
 
 		_status = ORecordElement.STATUS.UNMARSHALLING;
-		_recordFormat.fromStream(_database, _source, this);
+		_recordFormat.fromStream(_source, this);
 		_status = ORecordElement.STATUS.LOADED;
 	}
 
@@ -308,7 +295,7 @@ public abstract class ORecordSchemaAwareAbstract<T> extends ORecordAbstract<T> i
 	}
 
 	protected void checkForLoading() {
-		if (_status == ORecordElement.STATUS.NOT_LOADED && _database != null)
+		if (_status == ORecordElement.STATUS.NOT_LOADED && ODatabaseRecordThreadLocal.INSTANCE.check())
 			reload(null, true);
 	}
 }

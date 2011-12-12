@@ -24,8 +24,8 @@ import java.util.Map;
 import com.orientechnologies.orient.core.command.OCommandRequest;
 import com.orientechnologies.orient.core.command.OCommandRequestText;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
 import com.orientechnologies.orient.core.db.record.ORecordLazyList;
-import com.orientechnologies.orient.core.db.record.ORecordLazySet;
 import com.orientechnologies.orient.core.exception.OCommandExecutionException;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
@@ -36,6 +36,7 @@ import com.orientechnologies.orient.core.metadata.security.ORole;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.serialization.serializer.OStringSerializerHelper;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
+import com.orientechnologies.orient.core.type.tree.OMVRBTreeRIDSet;
 
 /**
  * SQL CREATE LINK command: Transform a JOIN relationship to a physical LINK
@@ -60,9 +61,9 @@ public class OCommandExecutorSQLCreateLink extends OCommandExecutorSQLPermission
 	private boolean							inverse					= false;
 
 	public OCommandExecutorSQLCreateLink parse(final OCommandRequestText iRequest) {
-		iRequest.getDatabase().checkSecurity(ODatabaseSecurityResources.COMMAND, ORole.PERMISSION_CREATE);
+		getDatabase().checkSecurity(ODatabaseSecurityResources.COMMAND, ORole.PERMISSION_CREATE);
 
-		init(iRequest.getDatabase(), iRequest.getText());
+		init(iRequest.getText());
 
 		StringBuilder word = new StringBuilder();
 
@@ -157,6 +158,7 @@ public class OCommandExecutorSQLCreateLink extends OCommandExecutorSQLPermission
 		if (destField == null)
 			throw new OCommandExecutionException("Cannot execute the command because it has not been parsed yet");
 
+		final ODatabaseRecord database = getDatabase();
 		if (!(database.getDatabaseOwner() instanceof ODatabaseDocumentTx))
 			throw new OCommandSQLParsingException("This command supports only the database type ODatabaseDocumentTx and type '"
 					+ database.getClass() + "' was found");
@@ -250,8 +252,8 @@ public class OCommandExecutorSQLCreateLink extends OCommandExecutorSQLPermission
 							} else {
 								if (linkType != null)
 									if (linkType == OType.LINKSET) {
-										value = new ORecordLazySet(target);
-										((ORecordLazySet) value).add(doc);
+										value = new OMVRBTreeRIDSet(target);
+										((OMVRBTreeRIDSet) value).add(doc);
 									} else if (linkType == OType.LINKLIST) {
 										value = new ORecordLazyList(target);
 										((ORecordLazyList) value).add(doc);

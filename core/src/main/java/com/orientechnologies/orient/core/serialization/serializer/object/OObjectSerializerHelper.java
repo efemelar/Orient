@@ -67,6 +67,7 @@ import com.orientechnologies.orient.core.record.ORecordInternal;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.serialization.serializer.record.OSerializationThreadLocal;
 import com.orientechnologies.orient.core.tx.OTransactionOptimistic;
+import com.orientechnologies.orient.core.type.tree.OMVRBTreeRIDSet;
 
 @SuppressWarnings("unchecked")
 /**
@@ -195,8 +196,8 @@ public class OObjectSerializerHelper {
 
 		} catch (Exception e) {
 
-			throw new OSchemaException("Cannot set the value '" + iValue + "' to the property '" + iProperty + "' for the pojo: " + iPojo,
-					e);
+			throw new OSchemaException(
+					"Cannot set the value '" + iValue + "' to the property '" + iProperty + "' for the pojo: " + iPojo, e);
 		}
 	}
 
@@ -302,7 +303,7 @@ public class OObjectSerializerHelper {
 
 			public Object fetchLinked(final ODocument iRoot, final Object iUserObject, final String iFieldName, final Object iLinked) {
 				final Class<?> type;
-				if (iLinked != null && iLinked instanceof ODocument)
+				if (iLinked != null && iLinked instanceof ODocument && (!"ORIDs".equals(((ODocument) iLinked).getClassName())))
 					// GET TYPE BY DOCUMENT'S CLASS. THIS WORKS VERY WELL FOR SUB-TYPES
 					type = getFieldType((ODocument) iLinked, iEntityManager);
 				else
@@ -322,12 +323,15 @@ public class OObjectSerializerHelper {
 				boolean propagate = false;
 
 				if (Set.class.isAssignableFrom(type)) {
-
-					final Collection<Object> set = (Collection<Object>) iLinked;
+					final Collection<?> set;
+					if (iLinked instanceof Collection)
+						set = (Collection<Object>) iLinked;
+					else
+						set = new OMVRBTreeRIDSet().fromDocument((ODocument) iLinked);
 
 					final Set<Object> target;
 					if (iLazyLoading)
-						target = new OLazyObjectSet<Object>(iRoot, set).setFetchPlan(iFetchPlan);
+						target = new OLazyObjectSet<Object>(iRoot, (Collection<Object>) set).setFetchPlan(iFetchPlan);
 					else {
 						target = new HashSet();
 						if (set != null && !set.isEmpty())
@@ -592,8 +596,10 @@ public class OObjectSerializerHelper {
 		}
 
 		if (db.isMVCC() && !versionConfigured && db.getTransaction() instanceof OTransactionOptimistic)
-			throw new OTransactionException("Cannot involve an object of class '" + pojoClass
-					+ "' in an Optimistic Transaction commit because it does not define @Version or @OVersion and therefore cannot handle MVCC");
+			throw new OTransactionException(
+					"Cannot involve an object of class '"
+							+ pojoClass
+							+ "' in an Optimistic Transaction commit because it does not define @Version or @OVersion and therefore cannot handle MVCC");
 
 		// SET OBJECT CLASS
 		iRecord.setClassName(schemaClass != null ? schemaClass.getName() : null);
@@ -617,16 +623,20 @@ public class OObjectSerializerHelper {
 
 			schemaProperty = schemaClass != null ? schemaClass.getProperty(fieldName) : null;
 
-			if (fieldValue != null
-					&& getEmbeddetTypesByJPAAnnotation(iPojo.getClass(), fieldValue.getClass(), fieldName, iEntityManager) != null
-					&& getEmbeddetTypesByJPAAnnotation(iPojo.getClass(), fieldValue.getClass(), fieldName, iEntityManager).equals(
-							OType.EMBEDDED)) {
-				if (schemaClass == null) {
-					db.getMetadata().getSchema().createClass(iPojo.getClass());
-					iRecord.setClassNameIfExists(iPojo.getClass().getSimpleName());
-				}
-				if (schemaProperty == null) {
-					schemaProperty = iRecord.getSchemaClass().createProperty(fieldName, OType.EMBEDDED);
+			if (fieldValue != null) {
+				if (isEmbeddedObject(iPojo.getClass(), fieldValue.getClass(), fieldName, iEntityManager)) {
+					// AUTO CREATE SCHEMA PROPERTY
+					if (schemaClass == null) {
+						db.getMetadata().getSchema().createClass(iPojo.getClass());
+						iRecord.setClassNameIfExists(iPojo.getClass().getSimpleName());
+					}
+
+					if (schemaProperty == null) {
+						OType t = OType.getTypeByClass(fieldValue.getClass());
+						if (t == null)
+							t = OType.EMBEDDED;
+						schemaProperty = iRecord.getSchemaClass().createProperty(fieldName, t);
+					}
 				}
 			}
 
@@ -1024,12 +1034,8 @@ public class OObjectSerializerHelper {
 		getters.put(iClass.getName() + "." + fieldName, f);
 	}
 
-	private static OType getEmbeddetTypesByJPAAnnotation(final Class<?> iPojoClass, final Class<?> iFieldClass,
-			final String iFieldName, final OEntityManager iEntityManager) {
-		if (embeddedFields.get(iPojoClass) != null && embeddedFields.get(iPojoClass).contains(iFieldName))
-			return OType.EMBEDDED;
-		else if (iEntityManager.getEntityClass(iFieldClass.getSimpleName()) != null)
-			return OType.LINK;
-		return null;
+	private static boolean isEmbeddedObject(final Class<?> iPojoClass, final Class<?> iFieldClass, final String iFieldName,
+			final OEntityManager iEntityManager) {
+		return embeddedFields.get(iPojoClass) != null && embeddedFields.get(iPojoClass).contains(iFieldName);
 	}
 }

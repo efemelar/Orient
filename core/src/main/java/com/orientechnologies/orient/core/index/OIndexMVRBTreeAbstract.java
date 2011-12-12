@@ -80,14 +80,8 @@ public abstract class OIndexMVRBTreeAbstract<T> extends OSharedResourceAdaptiveE
 
 		type = iType;
 		watchDog = new Listener() {
-			public void memoryUsageLow(final TYPE iType, final long usedMemory, final long maxMemory) {
-				if (iType == TYPE.JVM)
-					map.setOptimization(1);
-			}
-
-			public void memoryUsageCritical(final TYPE iType, final long usedMemory, final long maxMemory) {
-				if (iType == TYPE.JVM)
-					map.setOptimization(2);
+			public void memoryUsageLow(final long iFreeMemory, final long iFreeMemoryPercentage) {
+				map.setOptimization(iFreeMemoryPercentage < 10 ? 2 : 1);
 			}
 		};
 	}
@@ -608,7 +602,7 @@ public abstract class OIndexMVRBTreeAbstract<T> extends OSharedResourceAdaptiveE
 				if (operations != null) {
 					for (final ODocument op : operations) {
 						final int operation = (Integer) op.rawField("o");
-						final OIdentifiable value = op.field("v");
+						final OIdentifiable value = op.field("v", OType.LINK);
 
 						if (operation == OPERATION.PUT.ordinal())
 							put(key, value);

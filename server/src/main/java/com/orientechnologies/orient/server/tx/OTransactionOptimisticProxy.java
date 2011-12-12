@@ -22,7 +22,6 @@ import java.util.Map.Entry;
 
 import com.orientechnologies.orient.core.db.record.ODatabaseRecordTx;
 import com.orientechnologies.orient.core.db.record.ORecordLazyList;
-import com.orientechnologies.orient.core.db.record.ORecordLazySet;
 import com.orientechnologies.orient.core.exception.OSerializationException;
 import com.orientechnologies.orient.core.exception.OTransactionException;
 import com.orientechnologies.orient.core.id.ORID;
@@ -65,21 +64,21 @@ public class OTransactionOptimisticProxy extends OTransactionOptimistic {
 				switch (entry.status) {
 				case OTransactionRecordEntry.CREATED:
 					entry.clusterName = channel.readString();
-					entry.getRecord().fill(database, rid, 0, channel.readBytes(), true);
+					entry.getRecord().fill(rid, 0, channel.readBytes(), true);
 
 					// SAVE THE RECORD TO RETRIEVE THEM FOR THE NEW RID TO SEND BACK TO THE REQUESTER
 					createdRecords.put(rid.copy(), entry.getRecord());
 					break;
 
 				case OTransactionRecordEntry.UPDATED:
-					entry.getRecord().fill(database, rid, channel.readInt(), channel.readBytes(), true);
+					entry.getRecord().fill(rid, channel.readInt(), channel.readBytes(), true);
 
 					// SAVE THE RECORD TO RETRIEVE THEM FOR THE NEW VERSIONS TO SEND BACK TO THE REQUESTER
 					updatedRecords.put(rid, entry.getRecord());
 					break;
 
 				case OTransactionRecordEntry.DELETED:
-					entry.getRecord().fill(database, rid, channel.readInt(), null, false);
+					entry.getRecord().fill(rid, channel.readInt(), null, false);
 					break;
 
 				default:
@@ -137,8 +136,6 @@ public class OTransactionOptimisticProxy extends OTransactionOptimistic {
 			for (Entry<String, Object> field : ((ODocument) iRecord)) {
 				if (field.getValue() instanceof ORecordLazyList)
 					((ORecordLazyList) field.getValue()).lazyLoad(true);
-				else if (field.getValue() instanceof ORecordLazySet)
-					((ORecordLazySet) field.getValue()).lazyLoad(true);
 			}
 		}
 	}

@@ -213,12 +213,6 @@ public class OConsoleDatabaseApp extends OrientConsole implements OCommandOutput
 		}
 	}
 
-	public void test() {
-		ODocument doc = currentDatabase.load(new ORecordId(2, 0l));
-		doc.field("prova", "stocazzochettesefrega");
-		currentDatabase.save(doc);
-	}
-
 	@ConsoleCommand(description = "Create a new database")
 	public void createDatabase(
 			@ConsoleParameter(name = "database-url", description = "The url of the database to create in the format '<mode>:<path>'") String iDatabaseURL,
@@ -269,6 +263,7 @@ public class OConsoleDatabaseApp extends OrientConsole implements OCommandOutput
 		out.println("\nDone.");
 	}
 
+	@SuppressWarnings("deprecation")
 	@ConsoleCommand(description = "Create a new cluster in the current database. The cluster can be physical or logical")
 	public void createCluster(
 			@ConsoleParameter(name = "cluster-name", description = "The name of the cluster to create") String iClusterName,
@@ -713,7 +708,7 @@ public class OConsoleDatabaseApp extends OrientConsole implements OCommandOutput
 		checkCurrentDatabase();
 
 		ORecordId rid = new ORecordId(iRecordId);
-		final ORawBuffer buffer = currentDatabase.getStorage().readRecord(currentDatabase, rid, null, null);
+		final ORawBuffer buffer = currentDatabase.getStorage().readRecord(rid, null, null);
 
 		if (buffer == null)
 			throw new OException("The record has been deleted");
@@ -810,7 +805,7 @@ public class OConsoleDatabaseApp extends OrientConsole implements OCommandOutput
 			out.println("-------------------------------+----------------+");
 			out.println(" NAME                          | PROPERTIES     |");
 			out.println("-------------------------------+----------------+");
-			for (final OIndex index : indexes) {
+			for (final OIndex<?> index : indexes) {
 				final OIndexDefinition indexDefinition = index.getDefinition();
 				if (indexDefinition != null) {
 					final List<String> fields = indexDefinition.getFields();
@@ -876,27 +871,33 @@ public class OConsoleDatabaseApp extends OrientConsole implements OCommandOutput
 	public void clusters() {
 		if (currentDatabaseName != null) {
 			out.println("\nCLUSTERS:");
-			out.println("----------------------------------------------+------+---------------------+-----------+");
-			out.println(" NAME                                         |  ID  | TYPE                | RECORDS   |");
-			out.println("----------------------------------------------+------+---------------------+-----------+");
+			out.println("----------------------------------------------+------+---------------------+-----------+-----------+");
+			out.println(" NAME                                         |  ID  | TYPE                | RECORDS   | SIZE      |");
+			out.println("----------------------------------------------+------+---------------------+-----------+-----------+");
 
 			int clusterId;
 			String clusterType = null;
 			long totalElements = 0;
 			long count;
+			long size;
+			long totalSize = 0;
 			for (String clusterName : currentDatabase.getClusterNames()) {
 				try {
 					clusterId = currentDatabase.getClusterIdByName(clusterName);
 					clusterType = currentDatabase.getClusterType(clusterName);
 					count = currentDatabase.countClusterElements(clusterName);
+					size = currentDatabase.getClusterRecordSizeByName(clusterName);
 					totalElements += count;
-					out.printf(" %-45s|%6d| %-20s|%10d |\n", clusterName, clusterId, clusterType, count);
+					totalSize += size;
+					out.printf(" %-45s|%6d| %-20s|%10d |%10s |\n", clusterName, clusterId, clusterType, count,
+							OFileUtils.getSizeAsString(size));
 				} catch (Exception e) {
 				}
 			}
-			out.println("----------------------------------------------+------+---------------------+-----------+");
-			out.printf(" TOTAL                                                                 %15d |\n", totalElements);
-			out.println("---------------------------------------------------------------------------------------+");
+			out.println("----------------------------------------------+------+---------------------+-----------+-----------+");
+			out.printf(" TOTAL                                                                 %15d | %9s |\n", totalElements,
+					OFileUtils.getSizeAsString(totalSize));
+			out.println("--------------------------------------------------------------------------------------- -----------+");
 		} else
 			out.println("No database selected yet.");
 	}
@@ -1193,6 +1194,7 @@ public class OConsoleDatabaseApp extends OrientConsole implements OCommandOutput
 		try {
 			Thread.sleep(Long.parseLong(iTime));
 		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
 		}
 	}
 
@@ -1460,7 +1462,7 @@ public class OConsoleDatabaseApp extends OrientConsole implements OCommandOutput
 
 		currentResultSet.clear();
 
-		final Object result = new OCommandSQL(iReceivedCommand).setDatabase(currentDatabase).setProgressListener(this).execute();
+		final Object result = new OCommandSQL(iReceivedCommand).setProgressListener(this).execute();
 
 		if (result != null)
 			out.printf(iMessage, result, (float) (System.currentTimeMillis() - start) / 1000);

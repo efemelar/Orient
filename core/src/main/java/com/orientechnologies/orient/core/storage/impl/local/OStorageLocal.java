@@ -16,6 +16,7 @@
 package com.orientechnologies.orient.core.storage.impl.local;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -42,7 +43,6 @@ import com.orientechnologies.orient.core.config.OStorageLogicalClusterConfigurat
 import com.orientechnologies.orient.core.config.OStorageMemoryClusterConfiguration;
 import com.orientechnologies.orient.core.config.OStoragePhysicalClusterConfiguration;
 import com.orientechnologies.orient.core.config.OStorageSegmentConfiguration;
-import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
 import com.orientechnologies.orient.core.exception.OConcurrentModificationException;
 import com.orientechnologies.orient.core.exception.OConfigurationException;
 import com.orientechnologies.orient.core.exception.ORecordNotFoundException;
@@ -169,18 +169,28 @@ public class OStorageLocal extends OStorageEmbedded {
 				if (clusterConfig != null) {
 					pos = createClusterFromConfig(clusterConfig);
 
-					if (pos == -1) {
-						// CLOSE AND REOPEN TO BE SURE ALL THE FILE SEGMENTS ARE
-						// OPENED
-						clusters[i].close();
-						clusters[i] = new OClusterLocal(this, (OStoragePhysicalClusterConfiguration) clusterConfig);
-						clusterMap.put(clusters[i].getName(), clusters[i]);
-						clusters[i].open();
-					} else {
-						if (clusterConfig.getName().equals(OStorage.CLUSTER_DEFAULT_NAME))
-							defaultClusterId = pos;
+					try {
+						if (pos == -1) {
+							// CLOSE AND REOPEN TO BE SURE ALL THE FILE SEGMENTS ARE
+							// OPENED
+							clusters[i].close();
+							clusters[i] = new OClusterLocal(this, (OStoragePhysicalClusterConfiguration) clusterConfig);
+							clusterMap.put(clusters[i].getName(), clusters[i]);
+							clusters[i].open();
+						} else {
+							if (clusterConfig.getName().equals(OStorage.CLUSTER_DEFAULT_NAME))
+								defaultClusterId = pos;
 
-						clusters[pos].open();
+							clusters[pos].open();
+						}
+					} catch (FileNotFoundException e) {
+						OLogManager.instance().warn(
+								this,
+								"Error on loading cluster '" + clusters[i].getName() + "' (" + i + "). It will be excluded from current database '"
+										+ getName() + "'.");
+
+						clusterMap.remove(clusters[i].getName());
+						clusters[i] = null;
 					}
 				} else {
 					clusters = Arrays.copyOf(clusters, clusters.length + 1);
@@ -591,8 +601,7 @@ public class OStorageLocal extends OStorageEmbedded {
 		return iRid.clusterPosition;
 	}
 
-	public ORawBuffer readRecord(final ODatabaseRecord iDatabase, final ORecordId iRid, final String iFetchPlan,
-			ORecordCallback<ORawBuffer> iCallback) {
+	public ORawBuffer readRecord(final ORecordId iRid, final String iFetchPlan, ORecordCallback<ORawBuffer> iCallback) {
 		checkOpeness();
 		return readRecord(getClusterById(iRid.clusterId), iRid, true);
 	}
@@ -1130,7 +1139,26 @@ public class OStorageLocal extends OStorageEmbedded {
 					// DELETED
 					return -1;
 
-				if (iVersion != -1) {
+				// VERSION CONTROL CHECK
+				switch (iVersion) {
+				// DOCUMENT UPDATE, NO VERSION CONTROL
+				case -1:
+					++ppos.version;
+					iClusterSegment.updateVersion(iRid.clusterPosition, ppos.version);
+					break;
+
+				// DOCUMENT UPDATE, NO VERSION CONTROL, NO VERSION UPDATE
+				case -2:
+					break;
+
+				// DOCUMENT ROLLBACK, DECREMENT VERSION
+				case -3:
+					--ppos.version;
+					iClusterSegment.updateVersion(iRid.clusterPosition, ppos.version);
+					break;
+
+				default:
+					// MVCC CONTROL AND RECORD UPDATE OR WRONG VERSION VALUE
 					if (iVersion > -1) {
 						// MVCC TRANSACTION: CHECK IF VERSION IS THE SAME
 						if (iVersion != ppos.version)
@@ -1143,10 +1171,13 @@ public class OStorageLocal extends OStorageEmbedded {
 											+ ppos.version + " your=v" + iVersion + ")");
 
 						++ppos.version;
+						iClusterSegment.updateVersion(iRid.clusterPosition, ppos.version);
 					} else
-						--ppos.version;
+						throw new IllegalArgumentException("Cannot update record " + iRid + " in storage '" + name
+								+ "' because the version is not correct: recieved=" + iVersion
+								+ " expected=-1 (skip version control),-2 (skip version control and increment),-3 (rollback) or " + ppos.version
+								+ "(current version)");
 
-					iClusterSegment.updateVersion(iRid.clusterPosition, ppos.version);
 				}
 
 				if (ppos.type != iRecordType)
@@ -1244,7 +1275,8 @@ public class OStorageLocal extends OStorageEmbedded {
 		lock.acquireExclusiveLock();
 		try {
 
-			dataSegments[0].saveVersion(version.get());
+			if (dataSegments.length > 0)
+				dataSegments[0].saveVersion(version.get());
 
 		} finally {
 			lock.releaseExclusiveLock();
@@ -1282,8 +1314,16 @@ public class OStorageLocal extends OStorageEmbedded {
 			final OClusterLocal cluster;
 
 			if (iClusterName != null) {
+				// FIND THE FIRST AVAILABLE CLUSTER ID
+				int clusterPos = clusters.length;
+				for (int i = 0; i < clusters.length; ++i)
+					if (clusters[i] == null) {
+						clusterPos = i;
+						break;
+					}
+
 				final OStoragePhysicalClusterConfiguration config = new OStoragePhysicalClusterConfiguration(configuration, iClusterName,
-						clusters.length);
+						clusterPos);
 				configuration.clusters.add(config);
 
 				cluster = new OClusterLocal(this, config);

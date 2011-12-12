@@ -17,7 +17,7 @@ package com.orientechnologies.orient.core.tx;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -38,9 +38,9 @@ import com.orientechnologies.orient.core.tx.OTransactionIndexChanges.OPERATION;
 import com.orientechnologies.orient.core.tx.OTransactionIndexChangesPerKey.OTransactionIndexEntry;
 
 public abstract class OTransactionRealAbstract extends OTransactionAbstract {
-	protected Map<ORID, OTransactionRecordEntry>		allEntries				= new HashMap<ORID, OTransactionRecordEntry>();
-	protected Map<ORID, OTransactionRecordEntry>		recordEntries			= new HashMap<ORID, OTransactionRecordEntry>();
-	protected Map<String, OTransactionIndexChanges>	indexEntries			= new HashMap<String, OTransactionIndexChanges>();
+	protected Map<ORID, OTransactionRecordEntry>		allEntries				= new LinkedHashMap<ORID, OTransactionRecordEntry>();
+	protected Map<ORID, OTransactionRecordEntry>		recordEntries			= new LinkedHashMap<ORID, OTransactionRecordEntry>();
+	protected Map<String, OTransactionIndexChanges>	indexEntries			= new LinkedHashMap<String, OTransactionIndexChanges>();
 	protected int																		id;
 	protected int																		newObjectCounter	= -2;
 
@@ -160,7 +160,6 @@ public abstract class OTransactionRealAbstract extends OTransactionAbstract {
 	public ODocument getIndexChanges() {
 		final StringBuilder value = new StringBuilder();
 
-		final ODatabaseRecordTx database = getDatabase();
 		final ODocument result = new ODocument();
 
 		for (Entry<String, OTransactionIndexChanges> indexEntry : indexEntries.entrySet()) {
@@ -180,9 +179,9 @@ public abstract class OTransactionRealAbstract extends OTransactionAbstract {
 				if (entry.key != null) {
 					if (entry.key instanceof OCompositeKey) {
 						final List<Comparable> keys = ((OCompositeKey) entry.key).getKeys();
-						ORecordSerializerStringAbstract.fieldTypeToString(value, null, OType.EMBEDDEDLIST, keys);
+						ORecordSerializerStringAbstract.fieldTypeToString(value, OType.EMBEDDEDLIST, keys);
 					} else
-						ORecordSerializerStringAbstract.fieldTypeToString(value, null, OType.getTypeByClass(entry.key.getClass()), entry.key);
+						ORecordSerializerStringAbstract.fieldTypeToString(value, OType.getTypeByClass(entry.key.getClass()), entry.key);
 				} else
 					value.append('*');
 				String key = value.toString();

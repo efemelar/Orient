@@ -16,7 +16,21 @@
 package com.orientechnologies.orient.core.db;
 
 import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
+import com.orientechnologies.orient.core.exception.ODatabaseException;
 
 public class ODatabaseRecordThreadLocal extends ThreadLocal<ODatabaseRecord> {
 	public static ODatabaseRecordThreadLocal	INSTANCE	= new ODatabaseRecordThreadLocal();
+
+	@Override
+	public ODatabaseRecord get() {
+		final ODatabaseRecord db = super.get();
+		if (db == null)
+			throw new ODatabaseException(
+					"Database instance is not set in current thread. Assure to set it with: ODatabaseRecordThreadLocal.INSTANCE.set(db);");
+		return db;
+	}
+
+	public boolean check() {
+		return super.get() != null;
+	}
 }

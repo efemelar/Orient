@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
 import com.orientechnologies.orient.core.exception.OSerializationException;
 import com.orientechnologies.orient.core.id.ORID;
@@ -126,7 +127,7 @@ public abstract class OStringSerializerHelper {
 
 		case EMBEDDED:
 			// EMBEDDED
-			return OStringSerializerAnyStreamable.INSTANCE.fromStream(iDocument.getDatabase(), (String) iValue);
+			return OStringSerializerAnyStreamable.INSTANCE.fromStream((String) iValue);
 
 		case EMBEDDEDMAP:
 			// RECORD
@@ -439,7 +440,7 @@ public abstract class OStringSerializerHelper {
 		return params;
 	}
 
-	public static Map<String, String> getMap(final ODatabaseRecord iDatabase, final String iText) {
+	public static Map<String, String> getMap(final String iText) {
 		int openPos = iText.indexOf(MAP_BEGIN);
 		if (openPos == -1)
 			return EMPTY_MAP;
@@ -542,13 +543,14 @@ public abstract class OStringSerializerHelper {
 		return buffer.toString();
 	}
 
-	public static OClass getRecordClassName(final ODatabaseRecord iDatabase, String iValue, OClass iLinkedClass) {
+	public static OClass getRecordClassName(String iValue, OClass iLinkedClass) {
 		// EXTRACT THE CLASS NAME
 		int classSeparatorPos = iValue.indexOf(OStringSerializerHelper.CLASS_SEPARATOR);
 		if (classSeparatorPos > -1) {
 			final String className = iValue.substring(0, classSeparatorPos);
-			if (className != null && iDatabase != null)
-				iLinkedClass = iDatabase.getMetadata().getSchema().getClass(className);
+			final ODatabaseRecord database = ODatabaseRecordThreadLocal.INSTANCE.get();
+			if (className != null && database != null)
+				iLinkedClass = database.getMetadata().getSchema().getClass(className);
 
 			iValue = iValue.substring(classSeparatorPos + 1);
 		}
@@ -608,7 +610,7 @@ public abstract class OStringSerializerHelper {
 			String s = (String) iValue;
 			if (s.length() > 1 && (s.charAt(0) == BINARY_BEGINEND && s.charAt(s.length() - 1) == BINARY_BEGINEND)
 					|| (s.charAt(0) == '\'' && s.charAt(s.length() - 1) == '\''))
-				// @COMPATIBILITY 1.0rc7 ' TO SUPPORT OLD DATABASES
+				// @COMPATIBILITY 1.0rc7-SNAPSHOT ' TO SUPPORT OLD DATABASES
 				s = s.substring(1, s.length() - 1);
 			else
 				throw new IllegalArgumentException("Not binary type: " + iValue);

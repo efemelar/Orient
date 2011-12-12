@@ -390,7 +390,6 @@ public class SQLSelectTest {
 	public void queryCollectionContainsInRecords() {
 		database.open("admin", "admin");
 
-		record.setDatabase(database);
 		record.reset();
 		record.setClassName("Animal");
 		record.field("name", "Cat");
@@ -745,12 +744,13 @@ public class SQLSelectTest {
 	public void queryRecordTargetRid() {
 		database.open("admin", "admin");
 
-		List<ODocument> result = database.command(new OSQLSynchQuery<ODocument>("select from 10:0")).execute();
+		int profileClusterId = database.getMetadata().getSchema().getClass("Profile").getDefaultClusterId();
+		List<ODocument> result = database.command(new OSQLSynchQuery<ODocument>("select from " + profileClusterId + ":0")).execute();
 
-		Assert.assertTrue(result.size() == 1);
+		Assert.assertEquals(result.size(), 1);
 
 		for (ODocument d : result) {
-			Assert.assertTrue(d.getIdentity().toString().equals("#10:0"));
+			Assert.assertEquals(d.getIdentity().toString(), "#" + profileClusterId + ":0");
 		}
 
 		database.close();
@@ -759,13 +759,15 @@ public class SQLSelectTest {
 	@Test
 	public void queryRecordTargetRids() {
 		database.open("admin", "admin");
+		int profileClusterId = database.getMetadata().getSchema().getClass("Profile").getDefaultClusterId();
 
-		List<ODocument> result = database.command(new OSQLSynchQuery<ODocument>(" select from [10:0, 10:1]")).execute();
+		List<ODocument> result = database.command(
+				new OSQLSynchQuery<ODocument>(" select from [" + profileClusterId + ":0, " + profileClusterId + ":1]")).execute();
 
-		Assert.assertTrue(result.size() == 2);
+		Assert.assertEquals(result.size(), 2);
 
-		Assert.assertTrue(result.get(0).getIdentity().toString().equals("#10:0"));
-		Assert.assertTrue(result.get(1).getIdentity().toString().equals("#10:1"));
+		Assert.assertEquals(result.get(0).getIdentity().toString(), "#" + profileClusterId + ":0");
+		Assert.assertEquals(result.get(1).getIdentity().toString(), "#" + profileClusterId + ":1");
 
 		database.close();
 	}
@@ -773,13 +775,15 @@ public class SQLSelectTest {
 	@Test
 	public void queryRecordAttribRid() {
 		database.open("admin", "admin");
+		int profileClusterId = database.getMetadata().getSchema().getClass("Profile").getDefaultClusterId();
 
-		List<ODocument> result = database.command(new OSQLSynchQuery<ODocument>("select from Profile where @rid = #10:0")).execute();
+		List<ODocument> result = database.command(
+				new OSQLSynchQuery<ODocument>("select from Profile where @rid = #" + profileClusterId + ":0")).execute();
 
-		Assert.assertTrue(result.size() == 1);
+		Assert.assertEquals(result.size(), 1);
 
 		for (ODocument d : result) {
-			Assert.assertTrue(d.getIdentity().toString().equals("#10:0"));
+			Assert.assertEquals(d.getIdentity().toString(), "#" + profileClusterId + ":0");
 		}
 
 		database.close();
@@ -795,7 +799,7 @@ public class SQLSelectTest {
 		Assert.assertTrue(result.size() != 0);
 
 		for (ODocument d : result) {
-			Assert.assertTrue(d.getClassName().equals("Profile"));
+			Assert.assertEquals(d.getClassName(), "Profile");
 		}
 
 		database.close();
@@ -899,14 +903,13 @@ public class SQLSelectTest {
 	}
 
 	@Test
-	public void queryWithPagination() {
+	public void queryWithManualPagination() {
 		database.open("admin", "admin");
 
-		final OSQLSynchQuery<ODocument> firstQuery = new OSQLSynchQuery<ODocument>("select from Profile LIMIT 3");
-		final OSQLSynchQuery<ODocument> nextQuery = new OSQLSynchQuery<ODocument>("select from Profile where @rid > ? LIMIT 3");
+		final OSQLSynchQuery<ODocument> query = new OSQLSynchQuery<ODocument>("select from Profile where @rid > ? LIMIT 3");
 		ORID last = new ORecordId();
 
-		List<ODocument> resultset = database.query(firstQuery);
+		List<ODocument> resultset = database.query(query, last);
 
 		while (!resultset.isEmpty()) {
 			Assert.assertTrue(resultset.size() <= 3);
@@ -918,11 +921,37 @@ public class SQLSelectTest {
 
 			last = resultset.get(resultset.size() - 1).getIdentity();
 
-			resultset = database.query(nextQuery, last);
+			resultset = database.query(query, last);
 		}
 
 		database.close();
 	}
+
+  @Test
+  public void queryWithAutomaticPagination() {
+    database.open("admin", "admin");
+
+    final OSQLSynchQuery<ODocument> query = new OSQLSynchQuery<ODocument>("select from Profile LIMIT 3");
+    ORID last = new ORecordId();
+
+    List<ODocument> resultset = database.query(query);
+
+    while (!resultset.isEmpty()) {
+      Assert.assertTrue(resultset.size() <= 3);
+
+      for (ODocument d : resultset) {
+        Assert.assertTrue(d.getIdentity().getClusterId() < 0 || (d.getIdentity().getClusterId() >= last.getClusterId())
+            && d.getIdentity().getClusterPosition() > last.getClusterPosition());
+      }
+
+      last = resultset.get(resultset.size() - 1).getIdentity();
+
+      resultset = database.query(query);
+    }
+
+    database.close();
+  }
+
 
 	@Test
 	public void queryBetween() {
@@ -1037,11 +1066,17 @@ public class SQLSelectTest {
 		OGraphDatabase db1 = new OGraphDatabase(url);
 		db1 = db1.open("admin", "admin");
 
-		OClass oc = db1.createVertexType("vertexA");
-		oc.createProperty("name", OType.STRING);
+		OClass oc = db1.getVertexType("vertexA");
+		if (oc == null)
+			oc = db1.createVertexType("vertexA");
+		if (!oc.existsProperty("name"))
+			oc.createProperty("name", OType.STRING);
 		oc.createIndex("vertexA_name_idx", OClass.INDEX_TYPE.UNIQUE, "name");
 
-		OClass ocb = db1.createVertexType("vertexB");
+		OClass ocb = db1.getVertexType("vertexB");
+		if (ocb == null)
+			ocb = db1.createVertexType("vertexB");
+
 		ocb.createProperty("name", OType.STRING);
 		ocb.createProperty("map", OType.EMBEDDEDMAP);
 		ocb.createIndex("vertexB_name_idx", OClass.INDEX_TYPE.UNIQUE, "name");

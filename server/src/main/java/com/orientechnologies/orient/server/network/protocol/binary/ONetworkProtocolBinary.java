@@ -587,6 +587,12 @@ public class ONetworkProtocolBinary extends ONetworkProtocol {
 			break;
 		}
 
+		// VERSION MANAGEMENT:
+		// -1 : DOCUMENT UPDATE, NO VERSION CONTROL
+		// -2 : DOCUMENT UPDATE, NO VERSION CONTROL, NO VERSION INCREMENT
+		// -3 : DOCUMENT ROLLBACK, DECREMENT VERSION
+		// >-1 : MVCC CONTROL, RECORD UPDATE AND VERSION INCREMENT
+		// <-3 : WRONG VERSION VALUE
 		case OChannelBinaryProtocol.REQUEST_RECORD_UPDATE: {
 			data.commandInfo = "Update record";
 
@@ -646,8 +652,8 @@ public class ONetworkProtocolBinary extends ONetworkProtocol {
 
 			final boolean asynch = channel.readByte() == 'a';
 
-			final OCommandRequestText command = (OCommandRequestText) OStreamSerializerAnyStreamable.INSTANCE.fromStream(
-					connection.database, channel.readBytes());
+			final OCommandRequestText command = (OCommandRequestText) OStreamSerializerAnyStreamable.INSTANCE.fromStream(channel
+					.readBytes());
 
 			final OQuery<?> query = (OQuery<?>) (command instanceof OQuery<?> ? command : null);
 
@@ -750,8 +756,7 @@ public class ONetworkProtocolBinary extends ONetworkProtocol {
 						// ANY OTHER (INCLUDING LITERALS)
 						channel.writeByte((byte) 'a');
 						final StringBuilder value = new StringBuilder();
-						ORecordSerializerStringAbstract.fieldTypeToString(value, connection.database, OType.getTypeByClass(result.getClass()),
-								result);
+						ORecordSerializerStringAbstract.fieldTypeToString(value, OType.getTypeByClass(result.getClass()), result);
 						channel.writeString(value.toString());
 					}
 				}
@@ -875,20 +880,21 @@ public class ONetworkProtocolBinary extends ONetworkProtocol {
 		if (record != null) {
 			record.setVersion(version);
 			record.delete();
-		}
 		return 1;
+	}
+		return 0;
 	}
 
 	protected long createRecord(final ORecordId rid, final byte[] buffer, final byte recordType) {
-		final ORecordInternal<?> record = Orient.instance().getRecordFactoryManager().newInstance(connection.database, recordType);
-		record.fill(connection.database, rid, 0, buffer, true);
+		final ORecordInternal<?> record = Orient.instance().getRecordFactoryManager().newInstance(recordType);
+		record.fill(rid, 0, buffer, true);
 		connection.database.save(record);
 		return record.getIdentity().getClusterPosition();
 	}
 
 	protected int updateRecord(final ORecordId rid, final byte[] buffer, final int version, final byte recordType) {
-		final ORecordInternal<?> newRecord = Orient.instance().getRecordFactoryManager().newInstance(connection.database, recordType);
-		newRecord.fill(connection.database, rid, version, buffer, true);
+		final ORecordInternal<?> newRecord = Orient.instance().getRecordFactoryManager().newInstance(recordType);
+		newRecord.fill(rid, version, buffer, true);
 
 		if (((OSchemaProxy) connection.database.getMetadata().getSchema()).getIdentity().equals(rid))
 			// || ((OIndexManagerImpl) connection.database.getMetadata().getIndexManager()).getDocument().getIdentity().equals(rid)) {

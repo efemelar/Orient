@@ -33,12 +33,13 @@ import com.orientechnologies.common.parser.OStringParser;
 import com.orientechnologies.common.profiler.OProfiler;
 import com.orientechnologies.common.util.OPair;
 import com.orientechnologies.orient.core.command.OCommandRequestText;
+import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.db.record.ORecordElement;
-import com.orientechnologies.orient.core.db.record.ORecordLazySet;
 import com.orientechnologies.orient.core.exception.OCommandExecutionException;
 import com.orientechnologies.orient.core.exception.OQueryParsingException;
 import com.orientechnologies.orient.core.exception.ORecordNotFoundException;
+import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.index.OCompositeIndexDefinition;
 import com.orientechnologies.orient.core.index.OIndex;
@@ -75,6 +76,7 @@ import com.orientechnologies.orient.core.sql.query.OSQLAsynchQuery;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
 import com.orientechnologies.orient.core.storage.ORecordBrowsingListener;
 import com.orientechnologies.orient.core.storage.OStorageEmbedded;
+import com.orientechnologies.orient.core.type.tree.OMVRBTreeRIDSet;
 
 /**
  * Executes the SQL SELECT statement. the parse() method compiles the query and builds the meta information needed by the execute().
@@ -92,7 +94,6 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 	public static final String											KEYWORD_ORDER					= "ORDER";
 	public static final String											KEYWORD_BY						= "BY";
 	public static final String											KEYWORD_ORDER_BY			= "ORDER BY";
-	public static final String											KEYWORD_LIMIT					= "LIMIT";
 	private static final String											KEYWORD_FROM_2FIND		= " " + KEYWORD_FROM + " ";
 
 	private OSQLAsynchQuery<ORecordSchemaAware<?>>	request;
@@ -180,9 +181,10 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 	 * Compile the filter conditions only the first time.
 	 */
 	public OCommandExecutorSQLSelect parse(final OCommandRequestText iRequest) {
-		iRequest.getDatabase().checkSecurity(ODatabaseSecurityResources.COMMAND, ORole.PERMISSION_READ);
+		final ODatabaseRecord database = getDatabase();
+		database.checkSecurity(ODatabaseSecurityResources.COMMAND, ORole.PERMISSION_READ);
 
-		init(iRequest.getDatabase(), iRequest.getText());
+		init(iRequest.getText());
 
 		if (iRequest instanceof OSQLSynchQuery) {
 			request = (OSQLSynchQuery<ORecordSchemaAware<?>>) iRequest;
@@ -191,7 +193,6 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 		else {
 			// BUILD A QUERY OBJECT FROM THE COMMAND REQUEST
 			request = new OSQLSynchQuery<ORecordSchemaAware<?>>(iRequest.getText());
-			request.setDatabase(iRequest.getDatabase());
 			if (iRequest.getResultListener() != null)
 				request.setResultListener(iRequest.getResultListener());
 		}
@@ -209,7 +210,7 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 		if (endP > -1 && endP < endPosition)
 			endPosition = endP;
 
-		compiledFilter = OSQLEngine.getInstance().parseFromWhereCondition(iRequest.getDatabase(), text.substring(pos, endPosition));
+		compiledFilter = OSQLEngine.getInstance().parseFromWhereCondition(text.substring(pos, endPosition));
 
 		optimize();
 
@@ -276,8 +277,9 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 	}
 
 	public boolean foreach(final ORecordInternal<?> iRecord) {
-		if (filter(iRecord))
-			return addResult(iRecord);
+		if (iRecord != null)
+			if (filter(iRecord))
+				return addResult(iRecord);
 
 		return true;
 	}
@@ -870,6 +872,7 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 		return new OIndexSearchResult(iCondition.getOperator(), item.getRoot(), value);
 	}
 
+	@SuppressWarnings("rawtypes")
 	private void fillSearchIndexResultSet(final Object indexResult) {
 		if (indexResult != null) {
 			if (indexResult instanceof Collection<?>) {
@@ -902,7 +905,7 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 	}
 
 	protected boolean filter(final ORecordInternal<?> iRecord) {
-		return compiledFilter.evaluate(database, (ORecordSchemaAware<?>) iRecord);
+		return compiledFilter.evaluate((ORecordSchemaAware<?>) iRecord);
 	}
 
 	protected int parseProjections() {
@@ -963,7 +966,7 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 					List<String> pars = OStringSerializerHelper.getParameters(projection);
 					if (pars.size() != 1)
 						throw new OCommandSQLParsingException("FLATTEN operator expects the field name as parameter. Example FLATTEN( out )");
-					flattenTarget = OSQLHelper.parseValue(database, this, pars.get(0).trim());
+					flattenTarget = OSQLHelper.parseValue(this, pars.get(0).trim());
 
 					// BY PASS THIS AS PROJECTION BUT TREAT IT AS SPECIAL
 					projections = null;
@@ -975,7 +978,7 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 					continue;
 				}
 
-				projectionValue = OSQLHelper.parseValue(database, this, projection);
+				projectionValue = OSQLHelper.parseValue(this, projection);
 				projections.put(fieldName, projectionValue);
 
 				if (!anyFunctionAggregates && projectionValue instanceof OSQLFunctionRuntime
@@ -1016,10 +1019,19 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 
 	private void scanEntireClusters(final int[] clusterIds) {
 		final OSQLFilterCondition rootCondition = compiledFilter.getRootCondition();
-		if (rootCondition == null)
-			((OStorageEmbedded) database.getStorage()).browse(clusterIds, null, null, this, (ORecordInternal<?>) database.newInstance(),
+
+		final ODatabaseRecord database = getDatabase();
+
+		if (rootCondition == null){
+      final ORID beginRange;
+      if(request instanceof OSQLSynchQuery)
+        beginRange = ((OSQLSynchQuery)request).getNextPageRID();
+      else
+        beginRange = null;
+
+			((OStorageEmbedded) database.getStorage()).browse(clusterIds, beginRange, null, this, (ORecordInternal<?>) database.newInstance(),
 					false);
-		else
+    }	else
 			((OStorageEmbedded) database.getStorage()).browse(clusterIds, rootCondition.getBeginRidRange(),
 					rootCondition.getEndRidRange(), this, (ORecordInternal<?>) database.newInstance(), false);
 	}
@@ -1067,7 +1079,7 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 		if (projections != null) {
 			// APPLY PROJECTIONS
 			final ODocument doc = (ODocument) iRecord.getRecord();
-			final ODocument result = new ODocument(database).setOrdered(true);
+			final ODocument result = new ODocument().setOrdered(true);
 
 			boolean canExcludeResult = false;
 
@@ -1107,6 +1119,7 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 		final int[] clusterIds;
 		final OClass cls = compiledFilter.getTargetClasses().keySet().iterator().next();
 
+		final ODatabaseRecord database = getDatabase();
 		database.checkSecurity(ODatabaseSecurityResources.CLASS, ORole.PERMISSION_READ, cls.getName());
 
 		clusterIds = cls.getPolymorphicClusterIds();
@@ -1129,6 +1142,8 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 		if (firstCluster == null || firstCluster.length() == 0)
 			throw new OCommandExecutionException("No cluster or schema class selected in query");
 
+		final ODatabaseRecord database = getDatabase();
+
 		if (Character.isDigit(firstCluster.charAt(0)))
 			// GET THE CLUSTER NUMBER
 			clusterIds = OStringSerializerHelper.splitIntArray(firstCluster);
@@ -1144,6 +1159,7 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 	private void searchInRecords() {
 		ORecordId rid = new ORecordId();
 		ORecordInternal<?> record;
+		final ODatabaseRecord database = getDatabase();
 		for (String rec : compiledFilter.getTargetRecords()) {
 			rid.fromString(rec);
 			record = database.load(rid);
@@ -1154,7 +1170,7 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 	}
 
 	private void searchInIndex() {
-		final OIndex<Object> index = (OIndex<Object>) database.getMetadata().getIndexManager()
+		final OIndex<Object> index = (OIndex<Object>) getDatabase().getMetadata().getIndexManager()
 				.getIndex(compiledFilter.getTargetIndex());
 		if (index == null)
 			throw new OCommandExecutionException("Target index '" + compiledFilter.getTargetIndex() + "' not found");
@@ -1239,7 +1255,7 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 				final Entry<Object, Object> current = it.next();
 
 				if (current.getValue() instanceof Collection<?>)
-					for (Iterator<OIdentifiable> collIt = ((ORecordLazySet) current.getValue()).rawIterator(); collIt.hasNext();)
+					for (Iterator<OIdentifiable> collIt = ((OMVRBTreeRIDSet) current.getValue()).iterator(); collIt.hasNext();)
 						addResult(createIndexEntryAsDocument(current.getKey(), collIt.next().getIdentity()));
 				else
 					addResult(createIndexEntryAsDocument(current.getKey(), (OIdentifiable) current.getValue()));
@@ -1300,7 +1316,7 @@ public class OCommandExecutorSQLSelect extends OCommandExecutorSQLAbstract imple
 		if (anyFunctionAggregates) {
 			// EXECUTE AGGREGATIONS
 			Object value;
-			final ODocument result = new ODocument(database).setOrdered(true);
+			final ODocument result = new ODocument().setOrdered(true);
 			for (Entry<String, Object> projection : projections.entrySet()) {
 				if (projection.getValue() instanceof OSQLFilterItemField)
 					value = ((OSQLFilterItemField) projection.getValue()).getValue(result);

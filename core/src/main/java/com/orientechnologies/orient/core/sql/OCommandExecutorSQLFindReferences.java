@@ -27,10 +27,10 @@ import com.orientechnologies.orient.core.command.OCommandRequestText;
 import com.orientechnologies.orient.core.db.object.OLazyObjectList;
 import com.orientechnologies.orient.core.db.object.OLazyObjectMap;
 import com.orientechnologies.orient.core.db.object.OLazyObjectSet;
+import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.db.record.ORecordLazyList;
 import com.orientechnologies.orient.core.db.record.ORecordLazyMap;
-import com.orientechnologies.orient.core.db.record.ORecordLazySet;
 import com.orientechnologies.orient.core.exception.OCommandExecutionException;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.id.ORecordId;
@@ -40,6 +40,7 @@ import com.orientechnologies.orient.core.metadata.security.ORole;
 import com.orientechnologies.orient.core.record.ORecordInternal;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.serialization.serializer.OStringSerializerHelper;
+import com.orientechnologies.orient.core.type.tree.OMVRBTreeRIDSet;
 
 /**
  * SQL CREATE INDEX command: Create a new index against a property.
@@ -56,9 +57,9 @@ public class OCommandExecutorSQLFindReferences extends OCommandExecutorSQLPermis
 	private String							classList;
 
 	public OCommandExecutorSQLFindReferences parse(final OCommandRequestText iRequest) {
-		iRequest.getDatabase().checkSecurity(ODatabaseSecurityResources.COMMAND, ORole.PERMISSION_READ);
+		getDatabase().checkSecurity(ODatabaseSecurityResources.COMMAND, ORole.PERMISSION_READ);
 
-		init(iRequest.getDatabase(), iRequest.getText());
+		init(iRequest.getText());
 
 		final StringBuilder word = new StringBuilder();
 
@@ -109,6 +110,8 @@ public class OCommandExecutorSQLFindReferences extends OCommandExecutorSQLPermis
 		if (recordId == null)
 			throw new OCommandExecutionException("Cannot execute the command because it has not been parsed yet");
 
+		final ODatabaseRecord database = getDatabase();
+
 		Set<ORID> result = new HashSet<ORID>();
 		if (classList == null || classList.equals("")) {
 			for (String clusterName : database.getClusterNames()) {
@@ -129,6 +132,7 @@ public class OCommandExecutorSQLFindReferences extends OCommandExecutorSQLPermis
 	}
 
 	private void browseCluster(final String iClusterName, final Set<ORID> ids) {
+		final ODatabaseRecord database = getDatabase();
 		for (ORecordInternal<?> record : database.browseCluster(iClusterName)) {
 			if (record instanceof ODocument) {
 				try {
@@ -144,6 +148,7 @@ public class OCommandExecutorSQLFindReferences extends OCommandExecutorSQLPermis
 	}
 
 	private void browseClass(final String iClassName, final Set<ORID> ids) {
+		final ODatabaseRecord database = getDatabase();
 		final OClass clazz = database.getMetadata().getSchema().getClass(iClassName);
 
 		if (clazz == null)
@@ -180,8 +185,8 @@ public class OCommandExecutorSQLFindReferences extends OCommandExecutorSQLPermis
 			it = ((OLazyObjectSet<?>) values).iterator();
 		} else if (values instanceof ORecordLazyList) {
 			it = ((ORecordLazyList) values).rawIterator();
-		} else if (values instanceof ORecordLazySet) {
-			it = ((ORecordLazySet) values).rawIterator();
+		} else if (values instanceof OMVRBTreeRIDSet) {
+			it = ((OMVRBTreeRIDSet) values).iterator();
 		} else {
 			it = values.iterator();
 		}

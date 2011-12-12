@@ -351,7 +351,7 @@ public class ODatabaseImport extends ODatabaseImpExpAbstract {
 			next = jsonReader.readString(OJSONReader.COMMA_SEPARATOR);
 			next = jsonReader.readNext(OJSONReader.FIELD_ASSIGNMENT).getValue();
 		}
-		
+
 		next = jsonReader.checkContent("\"type\"").readString(OJSONReader.NEXT_IN_OBJECT);
 
 		final OType type = OType.valueOf(next);
@@ -509,6 +509,7 @@ public class ODatabaseImport extends ODatabaseImpExpAbstract {
 				++totalRecords;
 			} else
 				lastClusterId = 0;
+			record = null;
 		}
 
 		listener.onMessage("\n\nDone. Imported " + totalRecords + " records\n");
@@ -521,7 +522,7 @@ public class ODatabaseImport extends ODatabaseImpExpAbstract {
 	private ORID importRecord() throws IOException, ParseException {
 		final String value = jsonReader.readString(OJSONReader.END_OBJECT, true);
 
-		record = ORecordSerializerJSON.INSTANCE.fromString(database, value, record);
+		record = ORecordSerializerJSON.INSTANCE.fromString(value, record);
 
 		try {
 			if (schemaImported && record.getIdentity().toString().equals(database.getStorage().getConfiguration().schemaRecordId)) {

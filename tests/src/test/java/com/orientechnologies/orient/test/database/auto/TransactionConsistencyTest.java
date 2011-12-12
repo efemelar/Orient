@@ -17,6 +17,7 @@ package com.orientechnologies.orient.test.database.auto;
 
 import java.io.IOException;
 import java.util.HashSet;
+import java.util.List;
 
 import org.testng.Assert;
 import org.testng.annotations.Parameters;
@@ -26,7 +27,11 @@ import com.orientechnologies.orient.core.cache.OLevel2RecordCache.STRATEGY;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.exception.OConcurrentModificationException;
 import com.orientechnologies.orient.core.id.ORID;
+import com.orientechnologies.orient.core.metadata.schema.OClass;
+import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.record.impl.ODocument;
+import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
+import com.orientechnologies.orient.core.storage.OStorage;
 import com.orientechnologies.orient.core.tx.OTransaction.TXTYPE;
 
 @Test
@@ -60,12 +65,12 @@ public class TransactionConsistencyTest {
 		// Create docA.
 		ODocument vDocA_db1 = database1.newInstance();
 		vDocA_db1.field(NAME, "docA");
-		vDocA_db1.save();
+		database1.save(vDocA_db1);
 
 		// Create docB.
 		ODocument vDocB_db1 = database1.newInstance();
 		vDocB_db1.field(NAME, "docB");
-		vDocB_db1.save();
+		database1.save(vDocB_db1);
 
 		database1.commit();
 
@@ -78,13 +83,13 @@ public class TransactionConsistencyTest {
 			// Get docA and update in db2 transaction context
 			ODocument vDocA_db2 = database2.load(vDocA_Rid);
 			vDocA_db2.field(NAME, "docA_v2");
-			vDocA_db2.save();
+			database2.save(vDocA_db2);
 
 			// Concurrent update docA via database1 -> will throw OConcurrentModificationException at database2.commit().
 			database1.begin(TXTYPE.OPTIMISTIC);
 			try {
 				vDocA_db1.field(NAME, "docA_v3");
-				vDocA_db1.save();
+				database1.save(vDocA_db1);
 				database1.commit();
 			} catch (OConcurrentModificationException e) {
 				Assert.fail("Should not failed here...");
@@ -94,7 +99,7 @@ public class TransactionConsistencyTest {
 			// Update docB in db2 transaction context -> should be rollbacked.
 			ODocument vDocB_db2 = database2.load(vDocB_Rid);
 			vDocB_db2.field(NAME, "docB_UpdatedInTranscationThatWillBeRollbacked");
-			vDocB_db2.save();
+			database2.save(vDocB_db2);
 
 			// Will throw OConcurrentModificationException
 			database2.commit();
@@ -125,7 +130,7 @@ public class TransactionConsistencyTest {
 		ODocument vDocA_db1 = database1.newInstance();
 		vDocA_db1.field(NAME, "docA");
 		vDocA_db1.unpin();
-		vDocA_db1.save();
+		database1.save(vDocA_db1);
 
 		// Keep the IDs.
 		ORID vDocA_Rid = vDocA_db1.getIdentity().copy();
@@ -135,12 +140,12 @@ public class TransactionConsistencyTest {
 			// Get docA and update in db2 transaction context
 			ODocument vDocA_db2 = database2.load(vDocA_Rid);
 			vDocA_db2.field(NAME, "docA_v2");
-			vDocA_db2.save();
+			database2.save(vDocA_db2);
 
 			database1.begin(TXTYPE.OPTIMISTIC);
 			try {
 				vDocA_db1.field(NAME, "docA_v3");
-				vDocA_db1.save();
+				database1.save(vDocA_db1);
 				database1.commit();
 			} catch (OConcurrentModificationException e) {
 				Assert.fail("Should not failed here...");
@@ -177,7 +182,7 @@ public class TransactionConsistencyTest {
 		// Create docA.
 		ODocument vDocA_db1 = database1.newInstance();
 		vDocA_db1.field(NAME, "docA");
-		vDocA_db1.save();
+		database1.save(vDocA_db1);
 
 		// Keep the IDs.
 		ORID vDocA_Rid = vDocA_db1.getIdentity().copy();
@@ -187,12 +192,12 @@ public class TransactionConsistencyTest {
 			// Get docA and update in db2 transaction context
 			ODocument vDocA_db2 = database2.load(vDocA_Rid);
 			vDocA_db2.field(NAME, "docA_v2");
-			vDocA_db2.save();
+			database2.save(vDocA_db2);
 
 			database1.begin(TXTYPE.OPTIMISTIC);
 			try {
 				vDocA_db1.field(NAME, "docA_v3");
-				vDocA_db1.save();
+				database1.save(vDocA_db1);
 				database1.commit();
 			} catch (OConcurrentModificationException e) {
 				Assert.fail("Should not failed here...");
@@ -228,7 +233,7 @@ public class TransactionConsistencyTest {
 		database1.begin(TXTYPE.OPTIMISTIC);
 		ODocument vDocA_db1 = database1.newInstance();
 		vDocA_db1.field(NAME, "docA");
-		vDocA_db1.save();
+		database1.save(vDocA_db1);
 		database1.commit();
 
 		// Keep the ID.
@@ -238,7 +243,7 @@ public class TransactionConsistencyTest {
 		database2.begin(TXTYPE.OPTIMISTIC);
 		ODocument vDocA_db2 = database2.load(vDocA_Rid);
 		vDocA_db2.field(NAME, "docA_v2");
-		vDocA_db2.save();
+		database2.save(vDocA_db2);
 		database2.commit();
 
 		// Later... read docA with db1.
@@ -364,6 +369,48 @@ public class TransactionConsistencyTest {
 		db.open("admin", "admin");
 		loadedJack = db.load(jack.getIdentity());
 		Assert.assertTrue(jackLastVersion != loadedJack.getVersion());
+		db.close();
+	}
+
+	@SuppressWarnings("unchecked")
+	@Test
+	public void createLinkinTx() {
+		ODatabaseDocumentTx db = new ODatabaseDocumentTx(url);
+		db.open("admin", "admin");
+
+		OClass profile = db.getMetadata().getSchema()
+				.createClass("MyProfile", db.addCluster("myprofile", OStorage.CLUSTER_TYPE.PHYSICAL));
+		OClass edge = db.getMetadata().getSchema().createClass("MyEdge", db.addCluster("myedge", OStorage.CLUSTER_TYPE.PHYSICAL));
+		profile.createProperty("name", OType.STRING).setMin("3").setMax("30").createIndex(OClass.INDEX_TYPE.NOTUNIQUE);
+		profile.createProperty("surname", OType.STRING).setMin("3").setMax("30");
+		profile.createProperty("in", OType.LINKSET, edge);
+		profile.createProperty("out", OType.LINKSET, edge);
+		edge.createProperty("in", OType.LINK, profile);
+		edge.createProperty("out", OType.LINK, profile);
+
+		db.begin();
+
+		ODocument kim = new ODocument(db, "MyProfile").field("name", "Kim").field("surname", "Bauer");
+		ODocument teri = new ODocument(db, "MyProfile").field("name", "Teri").field("surname", "Bauer");
+		ODocument jack = new ODocument(db, "MyProfile").field("name", "Jack").field("surname", "Bauer");
+
+		ODocument myedge = new ODocument(db, "MyEdge").field("in", kim).field("out", jack);
+		myedge.save();
+		((HashSet<ODocument>) kim.field("out", new HashSet<ORID>()).field("out")).add(myedge);
+		((HashSet<ODocument>) jack.field("in", new HashSet<ORID>()).field("in")).add(myedge);
+
+		jack.save();
+		kim.save();
+		teri.save();
+
+		db.commit();
+		db.close();
+
+		db.open("admin", "admin");
+		List<ODocument> result = db.command(new OSQLSynchQuery<ODocument>("select from MyProfile ")).execute();
+
+		Assert.assertTrue(result.size() != 0);
+
 		db.close();
 	}
 }
