@@ -15,8 +15,6 @@
  */
 package com.orientechnologies.orient.core.cache;
 
-import java.util.Collection;
-
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.id.ORID;
@@ -25,142 +23,83 @@ import com.orientechnologies.orient.core.storage.OStorage;
 
 /**
  * Per database cache of documents.
- * 
+ *
  * @author Luca Garulli
- * 
+ * @author Sylvain Spinelli
  */
 public class OLevel2RecordCache extends OAbstractRecordCache {
 
-	private STRATEGY	strategy;
+  private STRATEGY strategy;
 
-	public enum STRATEGY {
-		POP_RECORD, COPY_RECORD
-	}
+  public enum STRATEGY {
+    POP_RECORD, COPY_RECORD
+  }
 
-	public OLevel2RecordCache(final OStorage iStorage) {
-		super("storage." + iStorage.getName(), OGlobalConfiguration.CACHE_LEVEL2_SIZE.getValueAsInteger());
-		setStrategy(OGlobalConfiguration.CACHE_LEVEL2_STRATEGY.getValueAsInteger());
-	}
+  public OLevel2RecordCache(final OStorage iStorage) {
+    super("storage." + iStorage.getName(), OCacheLocator.secondaryCache());
+    setStrategy(OGlobalConfiguration.CACHE_LEVEL2_STRATEGY.getValueAsInteger());
+  }
 
-	/**
-	 * Moves records to the Level2 cache. Update only the records already present to avoid to put a non-updated record.
-	 * 
-	 * @param iValues
-	 *          Collection of records to update
-	 */
-	public void moveRecords(final Collection<ORecordInternal<?>> iValues) {
-		if (!enabled)
-			return;
+  public void updateRecord(final ORecordInternal<?> fresh) {
+    if (!isEnabled() || fresh == null || fresh.isDirty() || fresh.getIdentity().isNew())
+      return;
 
-		acquireExclusiveLock();
-		try {
+    if (fresh.getIdentity().getClusterId() == excludedCluster)
+      return;
 
-			for (ORecordInternal<?> record : iValues) {
-				if (record == null || record.isDirty() || record.getIdentity().isNew())
-					continue;
+    if (fresh.isPinned()) {
+      final ORecordInternal<?> current = cache.get(fresh.getIdentity());
+      if (current != null && current.getVersion() >= fresh.getVersion())
+        return;
 
-				if (record.getIdentity().getClusterId() == excludedCluster)
-					continue;
+      if (databaseClosed(fresh)) {
+        fresh.detach();
+        cache.put(fresh);
+      } else
+        cache.put((ORecordInternal<?>) fresh.flatCopy());
+    } else
+      cache.remove(fresh.getIdentity());
+  }
 
-				if (record.isPinned()) {
-					final ORecordInternal<?> prevEntry = entries.get(record.getIdentity());
-					if (prevEntry != null && prevEntry.getVersion() >= record.getVersion())
-						// UPDATE ONLY RECORDS NOT PRESENT OR WITH VERSION HIGHER THAN CURRENT
-						continue;
+  private boolean databaseClosed(ORecordInternal<?> iRecord) {
+    return !ODatabaseRecordThreadLocal.INSTANCE.isDefined() || iRecord.getDatabase().isClosed();
+  }
 
-					record.detach();
-					entries.put(record.getIdentity(), record);
+  /**
+   * Retrieve the record if any following the supported strategies: 0 = If found remove it (pop): the client (database instances)
+   * will push it back when finished or on close. 1 = Return the instance but keep a copy in 2-level cache; this could help
+   * highly-concurrent environment.
+   *
+   * @param iRID record identity
+   * @return record if exists in cache, {@code null} otherwise
+   */
+  protected ORecordInternal<?> retrieveRecord(final ORID iRID) {
+    if (!isEnabled() ||
+      iRID.getClusterId() == excludedCluster)
+      return null;
 
-				} else
-					entries.remove(record.getIdentity());
-			}
+    final ORecordInternal<?> record = cache.remove(iRID);
 
-		} finally {
-			releaseExclusiveLock();
-		}
-	}
+    if (record == null || record.isDirty())
+      return null;
 
-	public void updateRecord(final ORecordInternal<?> iRecord) {
-		if (!enabled || iRecord == null || iRecord.isDirty() || iRecord.getIdentity().isNew())
-			// PRECONDITIONS
-			return;
+    if (strategy == STRATEGY.COPY_RECORD)
+      // PUT BACK A CLONE (THIS UPDATE ALSO THE LRU)
+      cache.put((ORecordInternal<?>) record.flatCopy());
 
-		if (iRecord.getIdentity().getClusterId() == excludedCluster)
-			return;
+    return record;
+  }
 
-		acquireExclusiveLock();
-		try {
-			if (iRecord.isPinned()) {
-				final ORecordInternal<?> prevEntry = entries.get(iRecord.getIdentity());
-				if (prevEntry != null && prevEntry.getVersion() >= iRecord.getVersion())
-					// TRY TO UPDATE AN OLD RECORD, DISCARD IT
-					return;
+  public void setStrategy(final STRATEGY iStrategy) {
+    strategy = iStrategy;
+  }
 
-				if ((!ODatabaseRecordThreadLocal.INSTANCE.isDefined() || iRecord.getDatabase().isClosed())) {
-					// DB CLOSED: MAKE THE RECORD INSTANCE AS REUSABLE AFTER A DETACH
-					iRecord.detach();
-					entries.put(iRecord.getIdentity(), iRecord);
-				} else
-					// DB OPEN: SAVES A COPY TO AVOID CHANGES IF THE SAME RECORD INSTANCE IS USED AGAIN
-					entries.put(iRecord.getIdentity(), (ORecordInternal<?>) iRecord.flatCopy());
-			} else
-				entries.remove(iRecord.getIdentity());
+  public void setStrategy(final int iStrategy) {
+    strategy = STRATEGY.values()[iStrategy];
+  }
 
-		} finally {
-			releaseExclusiveLock();
-		}
-	}
-
-	/**
-	 * Retrieve the record if any following the supported strategies: 0 = If found remove it (pop): the client (database instances)
-	 * will push it back when finished or on close. 1 = Return the instance but keep a copy in 2-level cache; this could help
-	 * highly-concurrent environment.
-	 * 
-	 * @author Luca Garulli
-	 * @author Sylvain Spinelli
-	 * @param iRID
-	 * @return
-	 */
-	protected ORecordInternal<?> retrieveRecord(final ORID iRID) {
-		if (!enabled)
-			// PRECONDITIONS
-			return null;
-
-		if (iRID.getClusterId() == excludedCluster)
-			return null;
-
-		acquireExclusiveLock();
-		try {
-			final ORecordInternal<?> record = entries.remove(iRID);
-			if (record == null || record.isDirty())
-				// NULL OR DIRTY RECORD: IGNORE IT
-				return null;
-
-			if (strategy == STRATEGY.COPY_RECORD)
-				// PUT BACK A CLONE (THIS UPDATE ALSO THE LRU)
-				entries.put(iRID, (ORecordInternal<?>) record.flatCopy());
-
-			return record;
-
-		} finally {
-			releaseExclusiveLock();
-		}
-	}
-
-	public STRATEGY getStrategy() {
-		return strategy;
-	}
-
-	public void setStrategy(final STRATEGY iStrategy) {
-		strategy = iStrategy;
-	}
-
-	public void setStrategy(final int iStrategy) {
-		strategy = STRATEGY.values()[iStrategy];
-	}
-
-	@Override
-	public String toString() {
-		return "STORAGE level2 cache records=" + getSize() + ", maxSize=" + maxSize;
-	}
+  @Override
+  public String toString() {
+    return "STORAGE level2 cache records=" + getSize() + ", maxSize=" + getMaxSize();
+  }
 }

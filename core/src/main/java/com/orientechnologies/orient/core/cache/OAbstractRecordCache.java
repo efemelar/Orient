@@ -15,266 +15,120 @@
  */
 package com.orientechnologies.orient.core.cache;
 
-import java.util.Collection;
+import com.orientechnologies.common.concur.resource.OSharedResourceAbstract;
+import com.orientechnologies.common.profiler.OProfiler;
+import com.orientechnologies.common.profiler.OProfiler.OProfilerHookValue;
+import com.orientechnologies.orient.core.id.ORID;
+import com.orientechnologies.orient.core.record.ORecordInternal;
+
 import java.util.HashSet;
 import java.util.Set;
 
-import com.orientechnologies.common.concur.resource.OSharedResourceAbstract;
-import com.orientechnologies.common.log.OLogManager;
-import com.orientechnologies.common.profiler.OProfiler;
-import com.orientechnologies.common.profiler.OProfiler.OProfilerHookValue;
-import com.orientechnologies.orient.core.Orient;
-import com.orientechnologies.orient.core.id.ORID;
-import com.orientechnologies.orient.core.memory.OMemoryWatchDog.Listener;
-import com.orientechnologies.orient.core.record.ORecordInternal;
-
 /**
  * Cache of documents.
- * 
+ *
  * @author Luca Garulli
- * 
  */
 public abstract class OAbstractRecordCache extends OSharedResourceAbstract {
-	protected boolean				enabled					= true;
-	protected int						maxSize;
-	protected ORecordCache	entries;
+  protected OCache cache;
+  protected String profilerPrefix;
+  protected int excludedCluster = -1;
 
-	protected Listener			watchDogListener;
-	protected String				profilerPrefix;
-	protected int						excludedCluster	= -1;
+  /**
+   * Create the cache of iMaxSize size.
+   *
+   * @param iProfilerPrefix prefix used to distinguish cache profiler from others
+   * @param cacheImpl       actual implementation of cache
+   */
+  public OAbstractRecordCache(final String iProfilerPrefix, final OCache cacheImpl) {
+    profilerPrefix = iProfilerPrefix;
+    cache = cacheImpl;
+  }
 
-	/**
-	 * Create the cache of iMaxSize size.
-	 * 
-	 * @param iMaxSize
-	 *          Maximum number of elements for the cache
-	 */
-	public OAbstractRecordCache(final String iProfilerPrefix, final int iMaxSize) {
-		profilerPrefix = iProfilerPrefix;
-		maxSize = iMaxSize;
+  public boolean isEnabled() {
+    return cache.isEnabled();
+  }
 
-		final int initialSize = maxSize > -1 ? maxSize + 1 : 1000;
-		entries = new ORecordCache(maxSize, initialSize, 0.75f);
-	}
+  public void setEnable(final boolean iValue) {
+    if (iValue) cache.enable();
+    else cache.disable();
+  }
 
-	public boolean isEnabled() {
-		return enabled;
-	}
+  public ORecordInternal<?> findRecord(final ORID iRid) {
+    return null;
+  }
 
-	public void setEnable(final boolean iValue) {
-		enabled = iValue;
-		if (!iValue)
-			entries.clear();
-	}
+  public ORecordInternal<?> freeRecord(final ORID iRID) {
+    return cache.remove(iRID);
+  }
 
-	public ORecordInternal<?> findRecord(final ORID iRid) {
-		return null;
-	}
+  public void freeCluster(final int clusterId) {
+    final Set<ORID> toRemove = new HashSet<ORID>(cache.size() / 2);
 
-	public ORecordInternal<?> freeRecord(final ORID iRID) {
-		if (!enabled)
-			// PRECONDITIONS
-			return null;
+    for (ORID id : cache.keys()) {
+      if (id.getClusterId() == clusterId)
+        toRemove.add(id);
+    }
+    for (ORID ridToRemove : toRemove)
+      cache.remove(ridToRemove);
+  }
 
-		acquireExclusiveLock();
-		try {
-			return entries.remove(iRID);
-		} finally {
-			releaseExclusiveLock();
-		}
-	}
+  /**
+   * Delete a record entry from both database and storage caches.
+   *
+   * @param iRecord Record to remove
+   */
+  public void deleteRecord(final ORID iRecord) {
+    if (!cache.isEnabled())
+      return;
+    cache.remove(iRecord);
+  }
 
-	public void freeCluster(final int clusterId) {
-		if (!enabled)
-			// PRECONDITIONS
-			return;
+  /**
+   * Clear the entire cache by removing all the entries.
+   */
+  public void clear() {
+    cache.clear();
+  }
 
-		acquireExclusiveLock();
-		final Set<ORID> toRemove = new HashSet<ORID>();
-		try {
-			for (ORID entry : entries.keySet()) {
-				if (entry.getClusterId() == clusterId) {
-					toRemove.add(entry);
-				}
-			}
-			for (ORID ridToRemove : toRemove) {
-				entries.remove(ridToRemove);
-			}
-		} finally {
-			toRemove.clear();
-			releaseExclusiveLock();
-		}
-	}
+  /**
+   * Total number cached entries.
+   *
+   * @return number of cached entries
+   */
+  public int getSize() {
+    return cache.size();
+  }
 
-	/**
-	 * Remove multiple records from the cache in one shot.
-	 * 
-	 * @param iRecords
-	 *          List of RIDs as RecordID instances
-	 */
-	public void removeRecords(final Collection<ORID> iRecords) {
-		if (!enabled)
-			// PRECONDITIONS
-			return;
+  public int getMaxSize() {
+    return cache.limit();
+  }
 
-		acquireExclusiveLock();
-		try {
-			for (ORID id : iRecords)
-				entries.remove(id);
-		} finally {
-			releaseExclusiveLock();
-		}
-	}
+  public void shutdown() {
+    cache.shutdown();
+  }
 
-	/**
-	 * Delete a record entry from both database and storage caches.
-	 * 
-	 * @param iRecord
-	 *          Record to remove
-	 */
-	public void deleteRecord(final ORID iRecord) {
-		if (!enabled)
-			// PRECONDITIONS
-			return;
+  public void startup() {
+    OProfiler.getInstance().registerHookValue(profilerPrefix + ".cache.enabled", new OProfilerHookValue() {
+      public Object getValue() {
+        return isEnabled();
+      }
+    });
 
-		acquireExclusiveLock();
-		try {
-			entries.remove(iRecord);
-		} finally {
-			releaseExclusiveLock();
-		}
-	}
+    OProfiler.getInstance().registerHookValue(profilerPrefix + ".cache.current", new OProfilerHookValue() {
+      public Object getValue() {
+        return getSize();
+      }
+    });
 
-	public boolean existsRecord(final ORID iRID) {
-		if (!enabled)
-			// PRECONDITIONS
-			return false;
+    OProfiler.getInstance().registerHookValue(profilerPrefix + ".cache.max", new OProfilerHookValue() {
+      public Object getValue() {
+        return getMaxSize();
+      }
+    });
+  }
 
-		acquireSharedLock();
-		try {
-			return entries.containsKey(iRID);
-		} finally {
-			releaseSharedLock();
-		}
-	}
-
-	/**
-	 * Clear the entire cache by removing all the entries.
-	 */
-	public void clear() {
-		if (!enabled)
-			// PRECONDITIONS
-			return;
-
-		acquireExclusiveLock();
-		try {
-			entries.clear();
-
-		} finally {
-			releaseExclusiveLock();
-		}
-	}
-
-	/**
-	 * Return the total cached entries.
-	 * 
-	 * @return
-	 */
-	public int getSize() {
-		acquireSharedLock();
-		try {
-			return entries.size();
-
-		} finally {
-			releaseSharedLock();
-		}
-	}
-
-	public int getMaxSize() {
-		acquireSharedLock();
-		try {
-			return maxSize;
-
-		} finally {
-			releaseSharedLock();
-		}
-	}
-
-	public void shutdown() {
-		acquireExclusiveLock();
-
-		try {
-			entries.clear();
-			Orient.instance().getMemoryWatchDog().removeListener(watchDogListener);
-			watchDogListener = null;
-
-		} finally {
-			releaseExclusiveLock();
-		}
-	}
-
-	public void setMaxSize(final int iMaxSize) {
-		maxSize = iMaxSize;
-	}
-
-	public void startup() {
-		watchDogListener = Orient.instance().getMemoryWatchDog().addListener(new Listener() {
-			public void memoryUsageLow(final long iFreeMemory, final long iFreeMemoryPercentage) {
-				acquireExclusiveLock();
-				try {
-					if (iFreeMemoryPercentage < 10) {
-						OLogManager.instance().debug(this, "Free memory is low (%d%%): clearing %d resources", iFreeMemoryPercentage,
-								entries.size());
-						entries.clear();
-					} else {
-						final int oldSize = entries.size();
-						if (oldSize == 0)
-							// UNACTIVE
-							return;
-
-						final int threshold = (int) (oldSize * 0.9f);
-
-						entries.removeEldestItems(threshold);
-						OLogManager.instance().debug(this, "Low memory (%d%%): auto reduce the record cache size from %d to %d",
-								iFreeMemoryPercentage, oldSize, threshold);
-					}
-				} catch (Exception e) {
-					OLogManager.instance().error(this, "Error while freeing resources", e);
-				} finally {
-					releaseExclusiveLock();
-				}
-			}
-		});
-
-		OProfiler.getInstance().registerHookValue(profilerPrefix + ".cache.enabled", new OProfilerHookValue() {
-			public Object getValue() {
-				return enabled;
-			}
-		});
-
-		OProfiler.getInstance().registerHookValue(profilerPrefix + ".cache.current", new OProfilerHookValue() {
-			public Object getValue() {
-				acquireSharedLock();
-				try {
-					return entries.size();
-				} finally {
-					releaseSharedLock();
-				}
-			}
-		});
-
-		OProfiler.getInstance().registerHookValue(profilerPrefix + ".cache.max", new OProfilerHookValue() {
-			public Object getValue() {
-				return maxSize;
-			}
-		});
-	}
-
-	public int getExcludedCluster() {
-		return excludedCluster;
-	}
-
-	public void setExcludedCluster(int excludedCluster) {
-		this.excludedCluster = excludedCluster;
-	}
+  public void setExcludedCluster(int excludedCluster) {
+    this.excludedCluster = excludedCluster;
+  }
 }
