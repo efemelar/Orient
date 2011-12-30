@@ -16,10 +16,12 @@
 package com.orientechnologies.orient.core.cache;
 
 import com.orientechnologies.common.profiler.OProfiler;
+import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.record.ORecordInternal;
-import com.orientechnologies.orient.core.storage.OStorage;
+
+import static com.orientechnologies.orient.core.storage.OStorage.CLUSTER_INDEX_NAME;
 
 /**
  * Per database cache of documents. It's not synchronized since database object are not thread-safes.
@@ -27,27 +29,26 @@ import com.orientechnologies.orient.core.storage.OStorage;
  * @author Luca Garulli
  */
 public class OLevel1RecordCache extends OAbstractRecordCache {
-
-  private final ODatabaseRecord database;
-  private volatile OLevel2RecordCache secondaryCache;
+  private volatile OLevel2RecordCache secondary;
   private String PROFILER_CACHE_FOUND;
   private String PROFILER_CACHE_NOT_FOUND;
 
-  public OLevel1RecordCache(final ODatabaseRecord iDatabase) {
-    super("db." + iDatabase.getName(), OCacheLocator.primaryCache());
-    database = iDatabase;
+  public OLevel1RecordCache(ODatabaseRecord db) {
+    super(new OCacheLocator().primaryCache());
   }
 
   @Override
   public void startup() {
-    profilerPrefix = "db." + database.getName();
+    ODatabaseRecord db = ODatabaseRecordThreadLocal.INSTANCE.get();
+    secondary = db.getLevel2Cache();
+
+    profilerPrefix = "db." + db.getName();
     PROFILER_CACHE_FOUND = profilerPrefix + ".cache.found";
     PROFILER_CACHE_NOT_FOUND = profilerPrefix + ".cache.notFound";
 
-    super.startup();
-    setExcludedCluster(database.getClusterIdByName(OStorage.CLUSTER_INDEX_NAME));
+    setExcludedCluster(db.getClusterIdByName(CLUSTER_INDEX_NAME));
 
-    secondaryCache = database.getLevel2Cache();
+    super.startup();
   }
 
   public void updateRecord(final ORecordInternal<?> iRecord) {
@@ -55,10 +56,10 @@ public class OLevel1RecordCache extends OAbstractRecordCache {
       iRecord.getIdentity().getClusterId() == excludedCluster)
       return;
 
-    if (cache.get(iRecord.getIdentity()) != iRecord)
-      cache.put(iRecord);
+    if (underlying.get(iRecord.getIdentity()) != iRecord)
+      underlying.put(iRecord);
 
-    secondaryCache.updateRecord(iRecord);
+    secondary.updateRecord(iRecord);
   }
 
   /**
@@ -71,13 +72,13 @@ public class OLevel1RecordCache extends OAbstractRecordCache {
     if (!isEnabled())
       return null;
 
-    ORecordInternal<?> record = cache.get(iRID);
+    ORecordInternal<?> record = underlying.get(iRID);
 
     if (record == null) {
-      record = secondaryCache.retrieveRecord(iRID);
+      record = secondary.retrieveRecord(iRID);
 
       if (record != null)
-        cache.put(record);
+        underlying.put(record);
     }
 
     OProfiler.getInstance().updateCounter(record != null ? PROFILER_CACHE_FOUND : PROFILER_CACHE_NOT_FOUND, +1);
@@ -92,12 +93,12 @@ public class OLevel1RecordCache extends OAbstractRecordCache {
    */
   public void deleteRecord(final ORID iRecord) {
     super.deleteRecord(iRecord);
-    secondaryCache.freeRecord(iRecord);
+    secondary.freeRecord(iRecord);
   }
 
   public void shutdown() {
     super.shutdown();
-    secondaryCache = null;
+    secondary = null;
   }
 
   @Override
@@ -107,16 +108,16 @@ public class OLevel1RecordCache extends OAbstractRecordCache {
   }
 
   public void moveRecordsToSecondaryCache() {
-    if (secondaryCache == null)
+    if (secondary == null)
       return;
 
-    for (ORID id : cache.keys()) {
-      secondaryCache.updateRecord(cache.get(id));
+    for (ORID id : underlying.keys()) {
+      secondary.updateRecord(underlying.get(id));
     }
   }
 
   public void invalidate() {
-    cache.clear();
+    underlying.clear();
   }
 
   @Override

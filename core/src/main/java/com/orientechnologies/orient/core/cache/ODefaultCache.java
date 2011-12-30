@@ -22,60 +22,50 @@ import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.memory.OMemoryWatchDog;
 import com.orientechnologies.orient.core.record.ORecordInternal;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ODefaultCache implements OCache {
-  int limit = 1000;
+  private static final int DEFAULT_LIMIT = 1000;
 
-  private boolean enabled;
+  private final OSharedResourceExternal lock = new OSharedResourceExternal();
+  private final AtomicBoolean enabled = new AtomicBoolean(false);
 
-  OLinkedHashMapCache cache;
-  OSharedResourceExternal lock = new OSharedResourceExternal();
-  protected OMemoryWatchDog.Listener watchDogListener;
+  private final OLinkedHashMapCache cache;
+  private final int limit;
 
-  ODefaultCache(int initialLimit) {
-    if (initialLimit > 0)
-      limit = initialLimit;
-    cache = new OLinkedHashMapCache(limit, limit + 1, 0.75f);
+  protected OMemoryWatchDog.Listener lowMemoryListener;
+
+  public ODefaultCache(int initialLimit) {
+    limit = initialLimit > 0 ? initialLimit : DEFAULT_LIMIT;
+    cache = new OLinkedHashMapCache(limit, 0.75f);
   }
 
   public void startup() {
-    watchDogListener = Orient.instance().getMemoryWatchDog().addListener(new LowMemoryListener());
+    lowMemoryListener = Orient.instance().getMemoryWatchDog().addListener(new OLowMemoryListener());
+    enable();
   }
 
   public void shutdown() {
-    try {
-      lock.acquireExclusiveLock();
-      cache.clear();
-    } finally {
-      lock.releaseExclusiveLock();
-    }
-    Orient.instance().getMemoryWatchDog().removeListener(watchDogListener);
-    watchDogListener = null;
+    Orient.instance().getMemoryWatchDog().removeListener(lowMemoryListener);
+    disable();
   }
 
   public boolean isEnabled() {
-    return enabled;
+    return enabled.get();
   }
 
   public boolean enable() {
-    final boolean enabledBefore = enabled;
-    enabled = true;
-    return !enabledBefore;
+    return enabled.compareAndSet(false, true);
   }
 
   public boolean disable() {
     clear();
-    final boolean enabledBefore = enabled;
-    enabled = false;
-    return enabledBefore;
+    return enabled.compareAndSet(true, false);
   }
 
   public ORecordInternal<?> get(ORID id) {
-    if (!enabled) return null;
+    if (!isEnabled()) return null;
     try {
       lock.acquireSharedLock();
       return cache.get(id);
@@ -85,7 +75,7 @@ public class ODefaultCache implements OCache {
   }
 
   public ORecordInternal<?> put(ORecordInternal<?> record) {
-    if (!enabled) return null;
+    if (!isEnabled()) return null;
     try {
       lock.acquireExclusiveLock();
       return cache.put(record.getIdentity(), record);
@@ -95,7 +85,7 @@ public class ODefaultCache implements OCache {
   }
 
   public ORecordInternal<?> remove(ORID id) {
-    if (!enabled) return null;
+    if (!isEnabled()) return null;
     try {
       lock.acquireExclusiveLock();
       return cache.remove(id);
@@ -105,7 +95,7 @@ public class ODefaultCache implements OCache {
   }
 
   public void clear() {
-    if (!enabled) return;
+    if (!isEnabled()) return;
     try {
       lock.acquireExclusiveLock();
       cache.clear();
@@ -124,12 +114,7 @@ public class ODefaultCache implements OCache {
   }
 
   public int limit() {
-    try {
-      lock.acquireSharedLock();
-      return limit;
-    } finally {
-      lock.releaseSharedLock();
-    }
+    return limit;
   }
 
   public Collection<ORID> keys() {
@@ -158,65 +143,47 @@ public class ODefaultCache implements OCache {
    *
    * @author Luca Garulli
    */
-  @SuppressWarnings("serial")
-  private class OLinkedHashMapCache extends LinkedHashMap<ORID, ORecordInternal<?>> {
-    private int limit;
+  class OLinkedHashMapCache extends LinkedHashMap<ORID, ORecordInternal<?>> {
 
-    public OLinkedHashMapCache(final int limit, final int initialCapacity, final float loadFactor) {
+    public OLinkedHashMapCache(int initialCapacity, float loadFactor) {
       super(initialCapacity, loadFactor, true);
-      this.limit = limit;
     }
 
     @Override
-    protected boolean removeEldestEntry(final Map.Entry<ORID, ORecordInternal<?>> iEldest) {
-      final int size = size();
-      if (limit == -1 || size < limit)
-        // DON'T REMOVE ELDEST
-        return false;
-
-      if (limit - size > 1) {
-        // REMOVE ITEMS MANUALLY
-        removeEldest(limit - size);
-        return false;
-      } else
-        return true;
+    protected boolean removeEldestEntry(Map.Entry<ORID, ORecordInternal<?>> eldest) {
+      return size() - limit > 0;
     }
 
-    public void removeEldest(final int threshold) {
-      final ORID[] ridToRemove = new ORID[size() - threshold];
+    protected void removeEldest(int amount) {
+      final ORID[] victims = new ORID[amount];
 
-      int entryNum = 0;
-      int i = 0;
-      for (java.util.Map.Entry<ORID, ORecordInternal<?>> ridEntry : entrySet()) {
-        if (!ridEntry.getValue().isDirty())
-          if (entryNum++ >= threshold)
-            // ADD ONLY AFTER THRESHOLD. THIS IS TO GET THE LESS USED
-            ridToRemove[i++] = ridEntry.getKey();
+      int skip = size() - amount;
+      int skipped = 0;
+      int selected = 0;
 
-        if (i >= ridToRemove.length)
-          break;
+      for (Map.Entry<ORID, ORecordInternal<?>> entry : entrySet()) {
+        if (entry.getValue().isDirty() || skipped++ < skip) continue;
+        victims[selected++] = entry.getKey();
       }
 
-      for (ORID rid : ridToRemove)
-        remove(rid);
+      for (ORID id : victims) remove(id);
     }
   }
 
-  class LowMemoryListener implements OMemoryWatchDog.Listener {
-    public void memoryUsageLow(final long freeMemory, final long freeMemoryPercentage) {
+  class OLowMemoryListener implements OMemoryWatchDog.Listener {
+    public void memoryUsageLow(long freeMemory, long freeMemoryPercentage) {
       try {
         if (freeMemoryPercentage < 10) {
           OLogManager.instance().debug(this, "Low memory (%d%%): clearing %d cached records", freeMemoryPercentage, size());
           clear();
         } else {
           final int oldSize = size();
-          if (oldSize == 0)
-            return;
+          if (oldSize == 0) return;
 
-          final int threshold = (int) (oldSize * 0.9f);
-          ODefaultCache.this.removeEldest(threshold);
+          final int newSize = (int) (oldSize * 0.9f);
+          ODefaultCache.this.removeEldest(oldSize - newSize);
           OLogManager.instance().debug(this, "Low memory (%d%%): reducing cached records number from %d to %d",
-            freeMemoryPercentage, oldSize, threshold);
+            freeMemoryPercentage, oldSize, newSize);
         }
       } catch (Exception e) {
         OLogManager.instance().error(this, "Error occurred during default cache cleanup", e);

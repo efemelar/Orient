@@ -56,7 +56,7 @@ public interface OCache {
   boolean disable();
 
   /**
-   * Pops record from cache by it's identifier
+   * Looks up for record in cache by it's identifier
    *
    * @param id unique identifier of record
    * @return record stored in cache if any, otherwise - {@code null}
@@ -101,7 +101,7 @@ public interface OCache {
   /**
    * Keys of all stored in cache records
    *
-   * @return
+   * @return keys of records
    */
   Collection<ORID> keys();
 }

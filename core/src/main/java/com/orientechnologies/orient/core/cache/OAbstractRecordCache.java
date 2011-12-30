@@ -30,28 +30,26 @@ import java.util.Set;
  * @author Luca Garulli
  */
 public abstract class OAbstractRecordCache extends OSharedResourceAbstract {
-  protected OCache cache;
-  protected String profilerPrefix;
+  protected OCache underlying;
+  protected String profilerPrefix = "noname";
   protected int excludedCluster = -1;
 
   /**
-   * Create the cache of iMaxSize size.
+   * Create the cache backed by given implementation
    *
-   * @param iProfilerPrefix prefix used to distinguish cache profiler from others
-   * @param cacheImpl       actual implementation of cache
+   * @param cacheImpl actual implementation of cache
    */
-  public OAbstractRecordCache(final String iProfilerPrefix, final OCache cacheImpl) {
-    profilerPrefix = iProfilerPrefix;
-    cache = cacheImpl;
+  public OAbstractRecordCache(final OCache cacheImpl) {
+    underlying = cacheImpl;
   }
 
   public boolean isEnabled() {
-    return cache.isEnabled();
+    return underlying.isEnabled();
   }
 
   public void setEnable(final boolean iValue) {
-    if (iValue) cache.enable();
-    else cache.disable();
+    if (iValue) underlying.enable();
+    else underlying.disable();
   }
 
   public ORecordInternal<?> findRecord(final ORID iRid) {
@@ -59,18 +57,18 @@ public abstract class OAbstractRecordCache extends OSharedResourceAbstract {
   }
 
   public ORecordInternal<?> freeRecord(final ORID iRID) {
-    return cache.remove(iRID);
+    return underlying.remove(iRID);
   }
 
   public void freeCluster(final int clusterId) {
-    final Set<ORID> toRemove = new HashSet<ORID>(cache.size() / 2);
+    final Set<ORID> toRemove = new HashSet<ORID>(underlying.size() / 2);
 
-    for (ORID id : cache.keys()) {
+    for (ORID id : underlying.keys()) {
       if (id.getClusterId() == clusterId)
         toRemove.add(id);
     }
     for (ORID ridToRemove : toRemove)
-      cache.remove(ridToRemove);
+      underlying.remove(ridToRemove);
   }
 
   /**
@@ -79,16 +77,14 @@ public abstract class OAbstractRecordCache extends OSharedResourceAbstract {
    * @param iRecord Record to remove
    */
   public void deleteRecord(final ORID iRecord) {
-    if (!cache.isEnabled())
-      return;
-    cache.remove(iRecord);
+    underlying.remove(iRecord);
   }
 
   /**
    * Clear the entire cache by removing all the entries.
    */
   public void clear() {
-    cache.clear();
+    underlying.clear();
   }
 
   /**
@@ -97,15 +93,15 @@ public abstract class OAbstractRecordCache extends OSharedResourceAbstract {
    * @return number of cached entries
    */
   public int getSize() {
-    return cache.size();
+    return underlying.size();
   }
 
   public int getMaxSize() {
-    return cache.limit();
+    return underlying.limit();
   }
 
   public void shutdown() {
-    cache.shutdown();
+    underlying.shutdown();
   }
 
   public void startup() {
@@ -126,6 +122,7 @@ public abstract class OAbstractRecordCache extends OSharedResourceAbstract {
         return getMaxSize();
       }
     });
+    underlying.startup();
   }
 
   public void setExcludedCluster(int excludedCluster) {

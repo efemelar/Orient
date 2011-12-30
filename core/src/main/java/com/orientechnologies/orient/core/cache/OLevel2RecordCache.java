@@ -15,11 +15,12 @@
  */
 package com.orientechnologies.orient.core.cache;
 
-import com.orientechnologies.orient.core.config.OGlobalConfiguration;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.record.ORecordInternal;
 import com.orientechnologies.orient.core.storage.OStorage;
+
+import static com.orientechnologies.orient.core.config.OGlobalConfiguration.CACHE_LEVEL2_STRATEGY;
 
 /**
  * Per database cache of documents.
@@ -36,8 +37,9 @@ public class OLevel2RecordCache extends OAbstractRecordCache {
   }
 
   public OLevel2RecordCache(final OStorage iStorage) {
-    super("storage." + iStorage.getName(), OCacheLocator.secondaryCache());
-    setStrategy(OGlobalConfiguration.CACHE_LEVEL2_STRATEGY.getValueAsInteger());
+    super(new OCacheLocator().secondaryCache());
+    profilerPrefix = "storage." + iStorage.getName();
+    setStrategy(CACHE_LEVEL2_STRATEGY.getValueAsInteger());
   }
 
   public void updateRecord(final ORecordInternal<?> fresh) {
@@ -48,17 +50,17 @@ public class OLevel2RecordCache extends OAbstractRecordCache {
       return;
 
     if (fresh.isPinned()) {
-      final ORecordInternal<?> current = cache.get(fresh.getIdentity());
+      final ORecordInternal<?> current = underlying.get(fresh.getIdentity());
       if (current != null && current.getVersion() >= fresh.getVersion())
         return;
 
       if (databaseClosed(fresh)) {
         fresh.detach();
-        cache.put(fresh);
+        underlying.put(fresh);
       } else
-        cache.put((ORecordInternal<?>) fresh.flatCopy());
+        underlying.put((ORecordInternal<?>) fresh.flatCopy());
     } else
-      cache.remove(fresh.getIdentity());
+      underlying.remove(fresh.getIdentity());
   }
 
   private boolean databaseClosed(ORecordInternal<?> iRecord) {
@@ -78,14 +80,14 @@ public class OLevel2RecordCache extends OAbstractRecordCache {
       iRID.getClusterId() == excludedCluster)
       return null;
 
-    final ORecordInternal<?> record = cache.remove(iRID);
+    final ORecordInternal<?> record = underlying.remove(iRID);
 
     if (record == null || record.isDirty())
       return null;
 
     if (strategy == STRATEGY.COPY_RECORD)
       // PUT BACK A CLONE (THIS UPDATE ALSO THE LRU)
-      cache.put((ORecordInternal<?>) record.flatCopy());
+      underlying.put((ORecordInternal<?>) record.flatCopy());
 
     return record;
   }

@@ -15,18 +15,51 @@
  */
 package com.orientechnologies.orient.core.cache;
 
-import static com.orientechnologies.orient.core.config.OGlobalConfiguration.CACHE_LEVEL1_SIZE;
-import static com.orientechnologies.orient.core.config.OGlobalConfiguration.CACHE_LEVEL2_SIZE;
+import com.orientechnologies.common.log.OLogManager;
+
+import java.lang.reflect.Constructor;
+
+import static com.orientechnologies.orient.core.config.OGlobalConfiguration.*;
 
 public class OCacheLocator {
-  public static OCache primaryCache() {
+  public OCache primaryCache() {
     return new ODefaultCache(CACHE_LEVEL1_SIZE.getValueAsInteger());
   }
 
-  public static OCache secondaryCache() {
+  public OCache secondaryCache() {
+    String cacheClassName = CACHE_LEVEL2_IMPL.getValueAsString();
+    try {
+      Class<?> cacheClass = findByCanonicalName(cacheClassName);
+      checkThatImplementsCacheInterface(cacheClass);
+      Constructor<?> cons = getPublicConstructorWithLimitParameter(cacheClass);
+
+      return (OCache) cons.newInstance(CACHE_LEVEL2_SIZE.getValueAsInteger());
+    } catch (Exception e) {
+      OLogManager.instance().error(this, "Can't initialize cache with implementation class [%s]. %s. Using default implementation [%s]",
+        cacheClassName, e.getMessage(), ODefaultCache.class.getCanonicalName());
+    }
     return new ODefaultCache(CACHE_LEVEL2_SIZE.getValueAsInteger());
   }
 
-  private OCacheLocator() {
+  private void checkThatImplementsCacheInterface(Class<?> cacheClass) {
+    if (!OCache.class.isAssignableFrom(cacheClass))
+      throw new IllegalArgumentException("Class doesn't implement OCache interface");
+  }
+
+  private Class<?> findByCanonicalName(String cacheClassName) {
+    try {
+      return Class.forName(cacheClassName);
+    } catch (ClassNotFoundException e) {
+      throw new IllegalArgumentException("Class not found");
+    }
+  }
+
+  private Constructor<?> getPublicConstructorWithLimitParameter(Class<?> cacheClass) {
+    Class<Integer> limitClass = int.class;
+    try {
+      return cacheClass.getConstructor(limitClass);
+    } catch (NoSuchMethodException e) {
+      throw new IllegalArgumentException("Class has no public constructor with parameter of type ["+limitClass+"]");
+    }
   }
 }
