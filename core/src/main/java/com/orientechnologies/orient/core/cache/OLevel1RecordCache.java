@@ -21,6 +21,8 @@ import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.record.ORecordInternal;
 
+import java.util.concurrent.atomic.AtomicReference;
+
 import static com.orientechnologies.orient.core.storage.OStorage.CLUSTER_INDEX_NAME;
 
 /**
@@ -29,7 +31,7 @@ import static com.orientechnologies.orient.core.storage.OStorage.CLUSTER_INDEX_N
  * @author Luca Garulli
  */
 public class OLevel1RecordCache extends OAbstractRecordCache {
-  private volatile OLevel2RecordCache secondary;
+  private volatile AtomicReference<OLevel2RecordCache> secondary = new AtomicReference<OLevel2RecordCache>();
   private String PROFILER_CACHE_FOUND;
   private String PROFILER_CACHE_NOT_FOUND;
 
@@ -40,7 +42,7 @@ public class OLevel1RecordCache extends OAbstractRecordCache {
   @Override
   public void startup() {
     ODatabaseRecord db = ODatabaseRecordThreadLocal.INSTANCE.get();
-    secondary = db.getLevel2Cache();
+    secondary.set(db.getLevel2Cache());
 
     profilerPrefix = "db." + db.getName();
     PROFILER_CACHE_FOUND = profilerPrefix + ".cache.found";
@@ -59,7 +61,7 @@ public class OLevel1RecordCache extends OAbstractRecordCache {
     if (underlying.get(iRecord.getIdentity()) != iRecord)
       underlying.put(iRecord);
 
-    secondary.updateRecord(iRecord);
+    secondary.get().updateRecord(iRecord);
   }
 
   /**
@@ -75,7 +77,7 @@ public class OLevel1RecordCache extends OAbstractRecordCache {
     ORecordInternal<?> record = underlying.get(iRID);
 
     if (record == null) {
-      record = secondary.retrieveRecord(iRID);
+      record = secondary.get().retrieveRecord(iRID);
 
       if (record != null)
         underlying.put(record);
@@ -93,12 +95,12 @@ public class OLevel1RecordCache extends OAbstractRecordCache {
    */
   public void deleteRecord(final ORID iRecord) {
     super.deleteRecord(iRecord);
-    secondary.freeRecord(iRecord);
+    secondary.get().freeRecord(iRecord);
   }
 
   public void shutdown() {
     super.shutdown();
-    secondary = null;
+    secondary.set(null);
   }
 
   @Override
@@ -112,7 +114,7 @@ public class OLevel1RecordCache extends OAbstractRecordCache {
       return;
 
     for (ORID id : underlying.keys()) {
-      secondary.updateRecord(underlying.get(id));
+      secondary.get().updateRecord(underlying.get(id));
     }
   }
 
